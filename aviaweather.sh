@@ -216,7 +216,7 @@ is_valid_icao() {
 # Функция для разбора METAR
 parse_metar() {
     local metar=$1
-    echo -e "${BLUE}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
+    echo -e "${GREEN}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
     echo -e "${CYAN}Исходный METAR: $metar${NC}"
     echo ""
     
@@ -426,7 +426,7 @@ main() {
     # Информация об аэропорте
     local airport_info=$(get_airport_info "$icao")
     echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
-    echo -e "${BLUE}🕐 Время запроса: $(date)${NC}"
+    echo -e "${GREEN}🕐 Время запроса: $(date)${NC}"
     echo ""
     
     # Получаем и декодируем METAR
