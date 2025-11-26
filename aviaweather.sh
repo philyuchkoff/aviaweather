@@ -4,10 +4,13 @@
 # Использование: ./aviaweather.sh UHWW
 
 # Цвета для вывода
+RED='\033[0;31m'
+GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
+WHITE='\033[0;37m'
 NC='\033[0m' # No Color
 
 # Функции для работы с данными вместо ассоциативных массивов
@@ -127,6 +130,9 @@ decode_weather() {
     esac
     
     local main_code=${code:1}
+    if [[ -z "$main_code" ]]; then
+        main_code=$code
+    fi
     result+=$(get_weather_phenomena "$main_code")
     echo "$result"
 }
@@ -167,41 +173,11 @@ fetch_metar() {
                 grep -A 2 "$icao" | head -1 | sed 's/<.*>//g')
     fi
     
-    if [[ -z "$metar" || ${#metar} -lt 10 ]]; then
-        # Источник 3: проверяем кэшированные данные
-        metar=$(fetch_from_backup_source "$icao")
-    fi
-    
     if [[ -n "$metar" && ${#metar} -gt 10 ]]; then
         echo "$metar"
     else
         echo ""
     fi
-}
-
-# Резервный источник данных
-fetch_from_backup_source() {
-    local icao=$1
-    case $icao in
-        UUEE)
-            echo "METAR UUEE $(date -u +%d%H%M)Z 01004MPS 9999 SCT020 02/M01 Q1013 NOSIG"
-            ;;
-        UUWW)
-            echo "METAR UUWW $(date -u +%d%H%M)Z 00000MPS 3500 BR SCT010 OVC020 03/02 Q1015"
-            ;;
-        UHWW)
-            echo "METAR UHWW $(date -u +%d%H%M)Z 08001MPS 9999 SCT033 M03/M09 Q1022 R25L/0///70 NOSIG RMK QFE765"
-            ;;
-        UHPP)
-            echo "METAR UHPP $(date -u +%d%H%M)Z 36008G12MPS 6000 -SN BKN015 M02/M04 Q0988"
-            ;;
-        URSS)
-            echo "METAR URSS $(date -u +%d%H%M)Z 00000MPS CAVOK 15/12 Q1015"
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
 }
 
 # Функция для проверки валидности кода ICAO
@@ -337,8 +313,8 @@ parse_metar() {
                 fi
                 ;;
             
-            # Погодные явления
-            [+-]?[A-Z][A-Z])
+            # Погодные явления (исправленная обработка)
+            [+-]?[A-Z][A-Z]|[A-Z][A-Z])
                 local weather_text=$(decode_weather "$part")
                 echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
                 ;;
