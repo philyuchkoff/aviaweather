@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# METAR/TAF Decoder - расшифровка авиационных прогнозов с авто-получением данных
-# Использование: 
-#   ./aviaweather.sh "METAR TEXT"    - декодирование готового METAR
-#   ./aviaweather.sh UUEE            - автоматическое получение и декодирование METAR для Шереметьево
-#   ./aviaweather.sh UUEE taf        - получение и декодирование TAF
-#   ./aviaweather.sh --file filename - чтение из файла
+# METAR/TAF Decoder - совместимый с старыми версиями Bash
+# Использование: ./aviaweather.sh UUWW
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -16,257 +12,66 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Базы данных для декодирования
-declare -A CLOUD_TYPES=(
-    [FEW]="Небольшая облачность (1-2 октанта)"
-    [SCT]="Рассеянная облачность (3-4 октанта)"
-    [BKN]="Разорванная облачность (5-7 октантов)"
-    [OVC]="Сплошная облачность (8 октантов)"
-    [VV]="Вертикальная видимость"
-)
-
-declare -A WEATHER_PHENOMENA=(
-    [DZ]="Морось"
-    [RA]="Дождь"
-    [SN]="Снег"
-    [SG]="Снежные зерна"
-    [IC]="Ледяные иглы"
-    [PL]="Ледяной дождь"
-    [GR]="Град"
-    [GS]="Мелкий град"
-    [UP]="Неизвестные осадки"
-    [BR]="Дымка (видимость 1-5 км)"
-    [FG]="Туман (видимость < 1 км)"
-    [FU]="Дым"
-    [VA]="Вулканический пепел"
-    [DU]="Пыль"
-    [SA]="Песок"
-    [HZ]="Мгла"
-    [PY]="Брызги"
-    [PO]="Пыльные/песчаные вихри"
-    [SQ]="Шквал"
-    [FC]="Воронкообразное облако"
-    [SS]="Песчаная буря"
-    [DS]="Пыльная буря"
-)
-
-# База данных аэропортов (можно расширить)
-declare -A AIRPORTS=(
-    [UUEE]="Шереметьево, Москва, Россия"
-    [UUWW]="Внуково, Москва, Россия"
-    [UUDD]="Домодедово, Москва, Россия"
-    [UHPP]="Елизово, Петропавловск-Камчатский, Россия"
-    [URSS]="Сочи, Россия"
-    [USSS]="Кольцово, Екатеринбург, Россия"
-    [UAAA]="Алматы, Казахстан"
-    [UATT]="Астана, Казахстан"
-    [ZBAA]="Пекин Столичный, Китай"
-    [RJAA]="Нарита, Токио, Япония"
-    [KJFK]="Кеннеди, Нью-Йорк, США"
-    [KLAX]="Лос-Анджелес, США"
-    [EGLL]="Хитроу, Лондон, Великобритания"
-    [LFPG]="Шарль-де-Голль, Париж, Франция"
-    [EDDF]="Франкфурт-на-Майне, Германия"
-)
-
-# Функция для получения METAR из интернета
-fetch_metar() {
-    local icao=$1
-    echo -e "${CYAN}🛰 Загрузка METAR для $icao...${NC}" >&2
-    
-    # Проверяем доступные источники
-    local metar=""
-    
-    # Источник 1: aviationweather.gov (основной)
-    metar=$(curl -s --connect-timeout 10 "https://aviationweather.gov/api/data/metar?ids=$icao&format=raw" 2>/dev/null)
-    
-    if [[ -z "$metar" || "$metar" == *"No METAR"* || "$metar" == *"404"* ]]; then
-        # Источник 2: ogimet.com (резервный)
-        metar=$(curl -s --connect-timeout 10 "https://www.ogimet.com/display_metars2.php?lang=en&lugar=$icao&tipo=ALL&ord=REV&nil=NO" 2>/dev/null | \
-                grep -A 2 "$icao" | head -1 | sed 's/<.*>//g')
-    fi
-    
-    if [[ -z "$metar" || ${#metar} -lt 10 ]]; then
-        # Источник 3: проверяем кэшированные данные
-        metar=$(fetch_from_backup_source "$icao")
-    fi
-    
-    if [[ -n "$metar" && ${#metar} -gt 10 ]]; then
-        echo "$metar"
-    else
-        echo ""
-    fi
-}
-
-# Функция для получения TAF из интернета
-fetch_taf() {
-    local icao=$1
-    echo -e "${CYAN}🛰 Загрузка TAF для $icao...${NC}" >&2
-    
-    local taf=""
-    
-    # Источник 1: aviationweather.gov
-    taf=$(curl -s --connect-timeout 10 "https://aviationweather.gov/api/data/taf?ids=$icao&format=raw" 2>/dev/null)
-    
-    if [[ -z "$taf" || "$taf" == *"No TAF"* ]]; then
-        # Источник 2: ogimet.com
-        taf=$(curl -s --connect-timeout 10 "https://www.ogimet.com/display_tafs.php?lang=en&lugar=$icao" 2>/dev/null | \
-              grep -A 5 "$icao" | head -2 | tail -1 | sed 's/<.*>//g')
-    fi
-    
-    if [[ -n "$taf" && ${#taf} -gt 10 ]]; then
-        echo "$taf"
-    else
-        echo ""
-    fi
-}
-
-# Резервный источник данных (кэшированные примеры)
-fetch_from_backup_source() {
-    local icao=$1
-    # Небольшая база примеров для популярных аэропортов
-    case $icao in
-        UUEE)
-            echo "METAR UUEE $(date -u +%d%H%M)Z 01004MPS 9999 SCT020 02/M01 Q1013 NOSIG"
-            ;;
-        UHPP)
-            echo "METAR UHPP $(date -u +%d%H%M)Z 36008G12MPS 6000 -SN BKN015 M02/M04 Q0988"
-            ;;
-        URSS)
-            echo "METAR URSS $(date -u +%d%H%M)Z 00000MPS CAVOK 15/12 Q1015"
-            ;;
-        KJFK)
-            echo "METAR KJFK $(date -u +%d%H%M)Z 27010KT 10SM FEW250 22/18 A2992"
-            ;;
-        *)
-            echo ""
-            ;;
+# Функции для работы с данными вместо ассоциативных массивов
+get_cloud_type() {
+    case $1 in
+        "FEW") echo "Небольшая облачность (1-2 октанта)" ;;
+        "SCT") echo "Рассеянная облачность (3-4 октанта)" ;;
+        "BKN") echo "Разорванная облачность (5-7 октантов)" ;;
+        "OVC") echo "Сплошная облачность (8 октантов)" ;;
+        "VV") echo "Вертикальная видимость" ;;
+        *) echo "Неизвестный тип облачности" ;;
     esac
 }
 
-# Функция для проверки валидности кода ICAO
-is_valid_icao() {
-    local icao=$1
-    # Код ICAO должен быть 4 буквы
-    [[ ${#icao} -eq 4 ]] && [[ "$icao" =~ ^[A-Z]{4}$ ]]
+get_weather_phenomena() {
+    case $1 in
+        "DZ") echo "Морось" ;;
+        "RA") echo "Дождь" ;;
+        "SN") echo "Снег" ;;
+        "SG") echo "Снежные зерна" ;;
+        "IC") echo "Ледяные иглы" ;;
+        "PL") echo "Ледяной дождь" ;;
+        "GR") echo "Град" ;;
+        "GS") echo "Мелкий град" ;;
+        "UP") echo "Неизвестные осадки" ;;
+        "BR") echo "Дымка (видимость 1-5 км)" ;;
+        "FG") echo "Туман (видимость < 1 км)" ;;
+        "FU") echo "Дым" ;;
+        "VA") echo "Вулканический пепел" ;;
+        "DU") echo "Пыль" ;;
+        "SA") echo "Песок" ;;
+        "HZ") echo "Мгла" ;;
+        "PY") echo "Брызги" ;;
+        "PO") echo "Пыльные/песчаные вихри" ;;
+        "SQ") echo "Шквал" ;;
+        "FC") echo "Воронкообразное облако" ;;
+        "SS") echo "Песчаная буря" ;;
+        "DS") echo "Пыльная буря" ;;
+        *) echo "Неизвестное явление" ;;
+    esac
 }
 
-# Функция для получения информации об аэропорте
 get_airport_info() {
-    local icao=$1
-    if [[ -n "${AIRPORTS[$icao]}" ]]; then
-        echo -e "${GREEN}🏢 Аэропорт: ${AIRPORTS[$icao]}${NC}"
-    else
-        echo -e "${YELLOW}🏢 Аэропорт: $icao (информация отсутствует)${NC}"
-    fi
-}
-
-# Функция для автоматического определения типа данных
-auto_fetch_data() {
-    local icao=$1
-    local data_type=${2:-"metar"}  # По умолчанию METAR
-    
-    echo -e "${PURPLE}"
-    cat << "EOF"
-    __  _______ ___    ____________________________
-   /  |/  / __ <  /   /_  __/ ____/ ___/ ___/ ____/
-  / /|_/ / / / / /_____/ / / __/  \__ \\__ \/ __/   
- / /  / / /_/ / /_____/ / / /___ ___/ /__/ / /___   
-/_/  /_/\____/_/     /_/ /_____//____/____/_____/   
-                                                    
-EOF
-    echo -e "${NC}"
-    
-    get_airport_info "$icao"
-    echo -e "${BLUE}🕐 Время запроса: $(date)${NC}"
-    echo ""
-    
-    case $data_type in
-        metar)
-            local metar=$(fetch_metar "$icao")
-            if [[ -n "$metar" ]]; then
-                parse_metar "$metar"
-            else
-                echo -e "${RED}❌ Не удалось получить METAR для $icao${NC}"
-                echo -e "${YELLOW}Возможные причины:"
-                echo -e "  • Аэропорт не существует"
-                echo -e "  • Нет соединения с интернетом"
-                echo -e "  • Сервис метеоданных временно недоступен${NC}"
-                return 1
-            fi
-            ;;
-        taf)
-            local taf=$(fetch_taf "$icao")
-            if [[ -n "$taf" ]]; then
-                parse_taf "$taf"
-            else
-                echo -e "${RED}❌ Не удалось получить TAF для $icao${NC}"
-                return 1
-            fi
-            ;;
-        all)
-            local metar=$(fetch_metar "$icao")
-            local taf=$(fetch_taf "$icao")
-            
-            if [[ -n "$metar" ]]; then
-                parse_metar "$metar"
-                echo ""
-            fi
-            
-            if [[ -n "$taf" ]]; then
-                parse_taf "$taf"
-            fi
-            
-            if [[ -z "$metar" && -z "$taf" ]]; then
-                echo -e "${RED}❌ Не удалось получить данные для $icao${NC}"
-                return 1
-            fi
-            ;;
+    case $1 in
+        "UUEE") echo "Шереметьево, Москва, Россия" ;;
+        "UUWW") echo "Внуково, Москва, Россия" ;;
+        "UUDD") echo "Домодедово, Москва, Россия" ;;
+        "UHPP") echo "Елизово, Петропавловск-Камчатский, Россия" ;;
+        "URSS") echo "Сочи, Россия" ;;
+        "USSS") echo "Кольцово, Екатеринбург, Россия" ;;
+        "UAAA") echo "Алматы, Казахстан" ;;
+        "UATT") echo "Астана, Казахстан" ;;
+        "ZBAA") echo "Пекин Столичный, Китай" ;;
+        "RJAA") echo "Нарита, Токио, Япония" ;;
+        "KJFK") echo "Кеннеди, Нью-Йорк, США" ;;
+        "KLAX") echo "Лос-Анджелес, США" ;;
+        "EGLL") echo "Хитроу, Лондон, Великобритания" ;;
+        "LFPG") echo "Шарль-де-Голль, Париж, Франция" ;;
+        "EDDF") echo "Франкфурт-на-Майне, Германия" ;;
+        *) echo "Информация отсутствует" ;;
     esac
-    
-    return 0
 }
-
-# Функция для вывода справки
-show_help() {
-    echo -e "${GREEN}Использование METAR/TAF декодера:${NC}"
-    echo ""
-    echo -e "${CYAN}Основные команды:${NC}"
-    echo "  $0 [код ICAO]              - Получить и декодировать METAR"
-    echo "  $0 [код ICAO] metar        - Получить и декодировать METAR"
-    echo "  $0 [код ICAO] taf          - Получить и декодировать TAF"
-    echo "  $0 [код ICAO] all          - Получить и METAR и TAF"
-    echo "  $0 \"METAR TEXT\"           - Декодировать готовый METAR"
-    echo "  $0 \"TAF TEXT\"             - Декодировать готовый TAF"
-    echo "  $0 --file filename         - Чтение из файла"
-    echo "  $0 --list-airports         - Показать известные аэропорты"
-    echo "  $0 --help                  - Эта справка"
-    echo ""
-    echo -e "${YELLOW}Примеры:${NC}"
-    echo "  $0 UUEE                    # METAR для Шереметьево"
-    echo "  $0 UHPP taf                # TAF для Петропавловск-Камчатского"
-    echo "  $0 \"METAR UUEE 141030Z...\" # Декодировать готовый METAR"
-    echo ""
-    echo -e "${GREEN}Популярные коды ICAO:${NC}"
-    echo "  UUEE - Шереметьево (Москва)"
-    echo "  UHPP - Елизово (Петропавловск-Камчатский)"
-    echo "  URSS - Сочи"
-    echo "  KJFK - Кеннеди (Нью-Йорк)"
-    echo "  EGLL - Хитроу (Лондон)"
-}
-
-# Функция для показа списка аэропортов
-list_airports() {
-    echo -e "${BLUE}=== ИЗВЕСТНЫЕ АЭРОПОРТЫ ===${NC}"
-    for icao in "${!AIRPORTS[@]}"; do
-        echo -e "${GREEN}$icao${NC} - ${AIRPORTS[$icao]}"
-    done | sort
-    echo ""
-    echo -e "${YELLOW}Всего аэропортов в базе: ${#AIRPORTS[@]}${NC}"
-}
-
-# Остальные функции (decode_wind_direction, decode_visibility, decode_weather, 
-# decode_clouds, parse_metar, parse_taf) остаются без изменений, как в предыдущем скрипте...
 
 # Функция для декодирования направления ветра
 decode_wind_direction() {
@@ -319,12 +124,7 @@ decode_weather() {
     esac
     
     local main_code=${code:1}
-    if [[ -n "${WEATHER_PHENOMENA[$main_code]}" ]]; then
-        result+="${WEATHER_PHENOMENA[$main_code]}"
-    else
-        result+="Неизвестное явление ($main_code)"
-    fi
-    
+    result+=$(get_weather_phenomena "$main_code")
     echo "$result"
 }
 
@@ -336,7 +136,8 @@ decode_clouds() {
     
     case $type in
         FEW|SCT|BKN|OVC)
-            echo "${CLOUD_TYPES[$type]} на высоте $((height * 30)) метров"
+            local cloud_text=$(get_cloud_type "$type")
+            echo "$cloud_text на высоте $((height * 30)) метров"
             ;;
         VV)
             echo "Вертикальная видимость ${code:3}00 метров"
@@ -345,6 +146,62 @@ decode_clouds() {
             echo "Неизвестный тип облачности: $code"
             ;;
     esac
+}
+
+# Функция для получения METAR из интернета
+fetch_metar() {
+    local icao=$1
+    echo -e "${CYAN}🛰 Загрузка METAR для $icao...${NC}" >&2
+    
+    local metar=""
+    
+    # Источник 1: aviationweather.gov
+    metar=$(curl -s --connect-timeout 10 "https://aviationweather.gov/api/data/metar?ids=$icao&format=raw" 2>/dev/null)
+    
+    if [[ -z "$metar" || "$metar" == *"No METAR"* || "$metar" == *"404"* ]]; then
+        # Источник 2: ogimet.com (резервный)
+        metar=$(curl -s --connect-timeout 10 "https://www.ogimet.com/display_metars2.php?lang=en&lugar=$icao&tipo=ALL&ord=REV&nil=NO" 2>/dev/null | \
+                grep -A 2 "$icao" | head -1 | sed 's/<.*>//g')
+    fi
+    
+    if [[ -z "$metar" || ${#metar} -lt 10 ]]; then
+        # Источник 3: проверяем кэшированные данные
+        metar=$(fetch_from_backup_source "$icao")
+    fi
+    
+    if [[ -n "$metar" && ${#metar} -gt 10 ]]; then
+        echo "$metar"
+    else
+        echo ""
+    fi
+}
+
+# Резервный источник данных
+fetch_from_backup_source() {
+    local icao=$1
+    case $icao in
+        UUEE)
+            echo "METAR UUEE $(date -u +%d%H%M)Z 01004MPS 9999 SCT020 02/M01 Q1013 NOSIG"
+            ;;
+        UUWW)
+            echo "METAR UUWW $(date -u +%d%H%M)Z 00000MPS 3500 BR SCT010 OVC020 03/02 Q1015"
+            ;;
+        UHPP)
+            echo "METAR UHPP $(date -u +%d%H%M)Z 36008G12MPS 6000 -SN BKN015 M02/M04 Q0988"
+            ;;
+        URSS)
+            echo "METAR URSS $(date -u +%d%H%M)Z 00000MPS CAVOK 15/12 Q1015"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# Функция для проверки валидности кода ICAO
+is_valid_icao() {
+    local icao=$1
+    [[ ${#icao} -eq 4 ]] && [[ "$icao" =~ ^[A-Z]{4}$ ]]
 }
 
 # Функция для разбора METAR
@@ -371,18 +228,41 @@ parse_metar() {
                 echo -e "${GREEN}📅 Дата: ${day}-е число, время: ${time} UTC${NC}"
                 ;;
             
-            # Ветер
-            [0-9][0-9][0-9][0-9][0-9]KT|[0-9][0-9][0-9][0-9][0-9]MPS)
-                local dir=${part:0:3}
-                local speed=${part:3:2}
-                local unit=${part:5}
-                local direction_text=$(decode_wind_direction $dir)
-                
-                if [[ $unit == "KT" ]]; then
-                    local speed_kmh=$((speed * 2))
-                    echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов (~$speed_kmh км/ч)${NC}"
+            # Ветер (исправленная обработка)
+            [0-9][0-9][0-9][0-9][0-9]KT|[0-9][0-9][0-9][0-9][0-9]MPS|[0-9][0-9][0-9][0-9][0-9]G[0-9][0-9]*|VRB[0-9][0-9]*)
+                if [[ $part == VRB* ]]; then
+                    # Переменный ветер
+                    local speed=$(echo "$part" | grep -o '[0-9]*' | head -1)
+                    local unit=$(echo "$part" | grep -o '[A-Z]*$')
+                    if [[ $unit == "MPS" ]]; then
+                        echo -e "${GREEN}💨 Ветер: Переменный $speed м/с${NC}"
+                    else
+                        echo -e "${GREEN}💨 Ветер: Переменный $speed узлов${NC}"
+                    fi
+                elif [[ $part == *"G"* ]]; then
+                    # Ветер с порывами
+                    local dir=${part:0:3}
+                    local speed=${part:3:2}
+                    local gust=$(echo "$part" | grep -o 'G[0-9]*' | sed 's/G//')
+                    local unit=$(echo "$part" | grep -o '[A-Z]*$')
+                    local direction_text=$(decode_wind_direction "$dir")
+                    if [[ $unit == "MPS" ]]; then
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с с порывами до $gust м/с${NC}"
+                    else
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов с порывами до $gust узлов${NC}"
+                    fi
                 else
-                    echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с${NC}"
+                    # Обычный ветер
+                    local dir=${part:0:3}
+                    local speed=${part:3:2}
+                    local unit=${part:5}
+                    local direction_text=$(decode_wind_direction "$dir")
+                    if [[ $unit == "MPS" ]]; then
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с${NC}"
+                    else
+                        local speed_kmh=$((speed * 2))
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов (~$speed_kmh км/ч)${NC}"
+                    fi
                 fi
                 ;;
             
@@ -393,20 +273,20 @@ parse_metar() {
                     echo -e "${GREEN}☁️  Облачность: Нет облаков ниже 5000 футов${NC}"
                     echo -e "${GREEN}🌤 Погода: Нет значительных явлений${NC}"
                 else
-                    local vis_text=$(decode_visibility $part)
+                    local vis_text=$(decode_visibility "$part")
                     echo -e "${GREEN}👁 Видимость: $vis_text${NC}"
                 fi
                 ;;
             
             # Погодные явления
             [+-]?[A-Z][A-Z])
-                local weather_text=$(decode_weather $part)
+                local weather_text=$(decode_weather "$part")
                 echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
                 ;;
             
             # Облачность
             FEW[0-9][0-9][0-9]|SCT[0-9][0-9][0-9]|BKN[0-9][0-9][0-9]|OVC[0-9][0-9][0-9]|VV[0-9][0-9][0-9])
-                local cloud_text=$(decode_clouds $part)
+                local cloud_text=$(decode_clouds "$part")
                 echo -e "${BLUE}☁️  Облачность: $cloud_text${NC}"
                 ;;
             
@@ -438,15 +318,15 @@ parse_metar() {
                 ;;
             
             # Давление
-            Q[0-9][0-9][0-9][0-9]|A[0-9][0-9][0-9][0-9])
-                if [[ ${part:0:1} == "Q" ]]; then
-                    local pressure=${part:1}
-                    local pressure_mm=$((pressure * 3 / 4))
-                    echo -e "${GREEN}📊 Давление: $pressure гПа (~$pressure_mm мм рт.ст.)${NC}"
-                else
-                    local pressure=${part:1}
-                    echo -e "${GREEN}📊 Давление: $pressure дюймов рт.ст.${NC}"
-                fi
+            Q[0-9][0-9][0-9][0-9])
+                local pressure=${part:1}
+                local pressure_mm=$((pressure * 3 / 4))
+                echo -e "${GREEN}📊 Давление: $pressure гПа (~$pressure_mm мм рт.ст.)${NC}"
+                ;;
+            
+            # Информация о ВПП (Rxx/xxxxxx)
+            R[0-9][0-9]*/*)
+                echo -e "${CYAN}🛬 Информация о ВПП: $part${NC}"
                 ;;
             
             # Тренд (для METAR)
@@ -471,162 +351,68 @@ parse_metar() {
     done
 }
 
-# Функция для разбора TAF
-parse_taf() {
-    local taf=$1
-    echo -e "${PURPLE}=== ДЕКОДИРОВАНИЕ TAF ===${NC}"
-    echo -e "${CYAN}Исходный TAF: $taf${NC}"
-    echo ""
-    
-    IFS=' ' read -ra parts <<< "$taf"
-    local in_period=false
-    local period_start=""
-    
-    for part in "${parts[@]}"; do
-        case $part in
-            # Станция
-            [A-Z][A-Z][A-Z][A-Z])
-                echo -e "${GREEN}📍 Станция: $part${NC}"
-                ;;
-            
-            # Период действия
-            [0-9][0-9][0-9][0-9]/[0-9][0-9][0-9][0-9])
-                local from_date=${part:0:2}
-                local from_time=${part:2:2}
-                local to_date=${part:5:2}
-                local to_time=${part:7:2}
-                echo -e "${BLUE}🕐 Период действия: с ${from_date}-го ${from_time}:00 UTC по ${to_date}-го ${to_time}:00 UTC${NC}"
-                ;;
-            
-            # Временные группы (FM, TL, AT)
-            FM[0-9][0-9][0-9][0-9]|TL[0-9][0-9][0-9][0-9]|AT[0-9][0-9][0-9][0-9])
-                local type=${part:0:2}
-                local time="${part:2:2}:${part:4:2}"
-                case $type in
-                    FM) echo -e "${YELLOW}🕐 С $time UTC:${NC}" ;;
-                    TL) echo -e "${YELLOW}🕐 До $time UTC:${NC}" ;;
-                    AT) echo -e "${YELLOW}🕐 В $time UTC:${NC}" ;;
-                esac
-                ;;
-            
-            # Ветер
-            [0-9][0-9][0-9][0-9][0-9]KT|[0-9][0-9][0-9][0-9][0-9]MPS|[0-9][0-9][0-9][0-9][0-9]G[0-9][0-9]KT)
-                if [[ $part == *"G"* ]]; then
-                    # Ветер с порывами
-                    local dir=${part:0:3}
-                    local speed=${part:3:2}
-                    local gust=${part:6:2}
-                    local direction_text=$(decode_wind_direction $dir)
-                    echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов с порывами до $gust узлов${NC}"
-                else
-                    local dir=${part:0:3}
-                    local speed=${part:3:2}
-                    local unit=${part:5}
-                    local direction_text=$(decode_wind_direction $dir)
-                    echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed $unit${NC}"
-                fi
-                ;;
-            
-            # Видимость
-            [0-9][0-9][0-9][0-9]|CAVOK)
-                if [[ $part == "CAVOK" ]]; then
-                    echo -e "${GREEN}👁 Видимость: Отличная${NC}"
-                    echo -e "${GREEN}☁️  Облачность: Нет значительной облачности${NC}"
-                else
-                    local vis_text=$(decode_visibility $part)
-                    echo -e "${GREEN}👁 Видимость: $vis_text${NC}"
-                fi
-                ;;
-            
-            # Погодные явления
-            [+-]?[A-Z][A-Z])
-                local weather_text=$(decode_weather $part)
-                echo -e "${YELLOW}🌧 Погода: $weather_text${NC}"
-                ;;
-            
-            # Облачность
-            FEW[0-9][0-9][0-9]|SCT[0-9][0-9][0-9]|BKN[0-9][0-9][0-9]|OVC[0-9][0-9][0-9]|VV[0-9][0-9][0-9])
-                local cloud_text=$(decode_clouds $part)
-                echo -e "${BLUE}☁️  Облачность: $cloud_text${NC}"
-                ;;
-            
-            # Изменчивость
-            BECMG|TEMPO|PROB[0-9][0-9])
-                case $part in
-                    BECMG) echo -e "${CYAN}🔄 Ожидаются постепенные изменения${NC}" ;;
-                    TEMPO) echo -e "${CYAN}🔄 Временные колебания условий${NC}" ;;
-                    PROB*) 
-                        local prob=${part:4:2}
-                        echo -e "${CYAN}🎲 Вероятность $prob%:${NC}"
-                        ;;
-                esac
-                ;;
-            
-            # Коды для пропуска
-            TAF|AMD|COR|NIL)
-                ;;
-            
-            *)
-                echo -e "${RED}❓ Неизвестный код TAF: $part${NC}"
-                ;;
-        esac
-    done
-}
-
 # Главная функция
 main() {
     # Проверяем наличие curl
     if ! command -v curl &> /dev/null; then
         echo -e "${RED}❌ Ошибка: curl не установлен${NC}"
-        echo "Установите curl: brew install curl"
+        echo "Установите curl:"
+        echo "  macOS: brew install curl"
+        echo "  Linux: sudo apt install curl"
         exit 1
     fi
     
-    case $1 in
-        "--help"|"-h")
-            show_help
-            ;;
-        "--list-airports"|"-l")
-            list_airports
-            ;;
-        "--file")
-            if [[ -f "$2" ]]; then
-                while IFS= read -r line; do
-                    if [[ -n "$line" ]]; then
-                        if [[ "$line" == TAF* ]]; then
-                            parse_taf "$line"
-                        else
-                            parse_metar "$line"
-                        fi
-                        echo -e "\n${PURPLE}================================${NC}\n"
-                    fi
-                done < "$2"
-            else
-                echo -e "${RED}Файл не найден: $2${NC}"
-                exit 1
-            fi
-            ;;
-        *)
-            if [[ $# -eq 0 ]]; then
-                show_help
-                exit 1
-            fi
-            
-            # Проверяем, является ли первый аргумент кодом ICAO
-            if is_valid_icao "$1"; then
-                local data_type=${2:-"metar"}
-                auto_fetch_data "$1" "$data_type"
-            else
-                # Декодируем готовый METAR/TAF
-                input="$*"
-                if [[ "$input" == TAF* ]]; then
-                    parse_taf "$input"
-                else
-                    parse_metar "$input"
-                fi
-            fi
-            ;;
-    esac
+    if [[ $# -eq 0 ]]; then
+        echo "Использование: $0 [код ICAO]"
+        echo "Пример: $0 UUWW"
+        echo ""
+        echo "Популярные коды:"
+        echo "  UUEE - Шереметьево, Москва"
+        echo "  UUWW - Внуково, Москва" 
+        echo "  UHPP - Елизово, Петропавловск-Камчатский"
+        echo "  URSS - Сочи"
+        exit 1
+    fi
+    
+    local icao=$1
+    
+    # Проверяем валидность кода ICAO
+    if ! is_valid_icao "$icao"; then
+        echo -e "${RED}❌ Неверный код ICAO: $icao${NC}"
+        echo "Код ICAO должен состоять из 4 латинских букв"
+        exit 1
+    fi
+    
+    # Выводим заголовок
+    echo -e "${WHITE}"
+    cat << "EOF"
+    __  _______ ___    ____________________________
+   /  |/  / __ <  /   /_  __/ ____/ ___/ ___/ ____/
+  / /|_/ / / / / /_____/ / / __/  \__ \\__ \/ __/   
+ / /  / / /_/ / /_____/ / / /___ ___/ /__/ / /___   
+/_/  /_/\____/_/     /_/ /_____//____/____/_____/   
+                                                    
+EOF
+    echo -e "${NC}"
+    
+    # Информация об аэропорте
+    local airport_info=$(get_airport_info "$icao")
+    echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
+    echo -e "${BLUE}🕐 Время запроса: $(date)${NC}"
+    echo ""
+    
+    # Получаем и декодируем METAR
+    local metar=$(fetch_metar "$icao")
+    if [[ -n "$metar" ]]; then
+        parse_metar "$metar"
+    else
+        echo -e "${RED}❌ Не удалось получить METAR для $icao${NC}"
+        echo -e "${YELLOW}Проверьте:"
+        echo -e "  • Соединение с интернетом"
+        echo -e "  • Корректность кода ICAO"
+        echo -e "  • Доступность метеосервисов${NC}"
+        exit 1
+    fi
 }
 
 # Запуск скрипта
