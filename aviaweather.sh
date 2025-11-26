@@ -3,7 +3,7 @@
 # AVIAWEATHER Decoder - совместимый с старыми версиями Bash
 # Использование: ./aviaweather.sh UHWW
 
-# Цвета для вывода
+# Цвета для вывода (убраны RED и BLUE для лучшей читаемости на черном фоне)
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 PURPLE='\033[0;35m'
@@ -47,6 +47,14 @@ get_weather_phenomena() {
         "FC") echo "Воронкообразное облако" ;;
         "SS") echo "Песчаная буря" ;;
         "DS") echo "Пыльная буря" ;;
+        "TS") echo "Гроза" ;;
+        "SH") echo "Ливень" ;;
+        "FZ") echo "Переохлажденный" ;;
+        "MI") echo "Мелкий" ;;
+        "PR") echo "Частичный" ;;
+        "BC") echo "Поземок" ;;
+        "BL") echo "Низовая метель" ;;
+        "DR") echo "Поземная пыль/песок" ;;
         *) echo "Неизвестное явление" ;;
     esac
 }
@@ -115,23 +123,78 @@ decode_visibility() {
     fi
 }
 
-# Функция для декодирования погодных явлений
-decode_weather() {
+# Функция для декодирования комбинированных погодных явлений
+decode_complex_weather() {
     local code=$1
     local result=""
     
-    # Интенсивность
-    case ${code:0:1} in
-        "-") result="Слабая " ;;
-        "+") result="Сильная " ;;
-        "") result="Умеренная " ;;
-    esac
+    # Определяем интенсивность
+    local intensity=""
+    local main_code=$code
     
-    local main_code=${code:1}
-    if [[ -z "$main_code" ]]; then
+    if [[ ${code:0:1} == "+" ]]; then
+        intensity="Сильный "
+        main_code=${code:1}
+    elif [[ ${code:0:1} == "-" ]]; then
+        intensity="Слабый "
+        main_code=${code:1}
+    else
+        intensity=""
         main_code=$code
     fi
-    result+=$(get_weather_phenomena "$main_code")
+    
+    result="$intensity"
+    
+    # Разбираем комбинированные коды
+    local temp_code=$main_code
+    while [[ ${#temp_code} -ge 2 ]]; do
+        case ${temp_code:0:2} in
+            "TS") result+="гроза, "; temp_code=${temp_code:2} ;;
+            "SH") result+="ливень, "; temp_code=${temp_code:2} ;;
+            "FZ") result+="переохлажденный, "; temp_code=${temp_code:2} ;;
+            "MI") result+="мелкий, "; temp_code=${temp_code:2} ;;
+            "PR") result+="частичный, "; temp_code=${temp_code:2} ;;
+            "BC") result+="поземок, "; temp_code=${temp_code:2} ;;
+            "BL") result+="низовая метель, "; temp_code=${temp_code:2} ;;
+            "DR") result+="поземная пыль, "; temp_code=${temp_code:2} ;;
+            "DZ") result+="морось, "; temp_code=${temp_code:2} ;;
+            "RA") result+="дождь, "; temp_code=${temp_code:2} ;;
+            "SN") result+="снег, "; temp_code=${temp_code:2} ;;
+            "SG") result+="снежные зерна, "; temp_code=${temp_code:2} ;;
+            "IC") result+="ледяные иглы, "; temp_code=${temp_code:2} ;;
+            "PL") result+="ледяной дождь, "; temp_code=${temp_code:2} ;;
+            "GR") result+="град, "; temp_code=${temp_code:2} ;;
+            "GS") result+="мелкий град, "; temp_code=${temp_code:2} ;;
+            "UP") result+="неизвестные осадки, "; temp_code=${temp_code:2} ;;
+            "BR") result+="дымка, "; temp_code=${temp_code:2} ;;
+            "FG") result+="туман, "; temp_code=${temp_code:2} ;;
+            "FU") result+="дым, "; temp_code=${temp_code:2} ;;
+            "VA") result+="вулканический пепел, "; temp_code=${temp_code:2} ;;
+            "DU") result+="пыль, "; temp_code=${temp_code:2} ;;
+            "SA") result+="песок, "; temp_code=${temp_code:2} ;;
+            "HZ") result+="мгла, "; temp_code=${temp_code:2} ;;
+            "PY") result+="брызги, "; temp_code=${temp_code:2} ;;
+            "PO") result+="пыльные вихри, "; temp_code=${temp_code:2} ;;
+            "SQ") result+="шквал, "; temp_code=${temp_code:2} ;;
+            "FC") result+="воронкообразное облако, "; temp_code=${temp_code:2} ;;
+            "SS") result+="песчаная буря, "; temp_code=${temp_code:2} ;;
+            "DS") result+="пыльная буря, "; temp_code=${temp_code:2} ;;
+            *) 
+                # Если не нашли совпадение, пробуем взять один символ
+                local single_char=$(get_weather_phenomena "${temp_code:0:1}")
+                if [[ "$single_char" != "Неизвестное явление" ]]; then
+                    result+="$single_char, "
+                    temp_code=${temp_code:1}
+                else
+                    result+="неизвестное явление, "
+                    temp_code=${temp_code:1}
+                fi
+                ;;
+        esac
+    done
+    
+    # Убираем последнюю запятую и пробел
+    result=${result%, }
     echo "$result"
 }
 
@@ -231,6 +294,16 @@ parse_temperature() {
     fi
 }
 
+# Функция для проверки является ли код погодным явлением
+is_weather_code() {
+    local code=$1
+    # Проверяем коды с интенсивностью (+RA, -SN, etc) и комбинированные коды
+    if [[ $code =~ ^[+-]?[A-Z]{2,}$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
 # Функция для разбора METAR
 parse_metar() {
     local metar=$1
@@ -311,12 +384,6 @@ parse_metar() {
                 fi
                 ;;
             
-            # Погодные явления (исправленная обработка)
-            [+-]?[A-Z][A-Z]|[A-Z][A-Z])
-                local weather_text=$(decode_weather "$part")
-                echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
-                ;;
-            
             # Облачность
             FEW[0-9][0-9][0-9]|SCT[0-9][0-9][0-9]|BKN[0-9][0-9][0-9]|OVC[0-9][0-9][0-9]|VV[0-9][0-9][0-9])
                 local cloud_text=$(decode_clouds "$part")
@@ -370,8 +437,14 @@ parse_metar() {
                 ;;
             
             *)
-                # Неизвестные коды
-                echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
+                # Проверяем является ли код погодным явлением
+                if is_weather_code "$part"; then
+                    local weather_text=$(decode_complex_weather "$part")
+                    echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
+                else
+                    # Неизвестные коды
+                    echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
+                fi
                 ;;
         esac
     done
