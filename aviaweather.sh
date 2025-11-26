@@ -5,7 +5,6 @@
 
 # Цвета для вывода
 RED='\033[0;31m'
-WHITE='\033[0;37m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
@@ -383,6 +382,8 @@ main() {
         echo "Код ICAO должен состоять из 4 латинских букв"
         exit 1
     fi
+    
+    echo -e "${NC}"
     
     # Информация об аэропорте
     local airport_info=$(get_airport_info "$icao")
