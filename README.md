@@ -24,30 +24,30 @@ Cкрипт на Bash для автоматического получения �
 
 ```bash
 # Скачайте скрипт
-curl -O https://raw.githubusercontent.com/username/metar-decoder/main/metar-decoder.sh
+curl -O https://raw.githubusercontent.com/philyuchkoff/aviaweather/main/aviaweather.sh
 
 # Дайте права на выполнение
-chmod +x metar-decoder.sh
+chmod +x aviaweather.sh
 
 # Запустите справку
-./metar-decoder.sh --help
+./aviaweather.sh --help
 ```
 ### Примеры использования
 ```bash
 # Автоматически получить и расшифровать METAR для Шереметьево
-./metar-decoder.sh UUEE
+./aviaweather.sh UUEE
 
 # Получить TAF для Петропавловск-Камчатского
-./metar-decoder.sh UHPP taf
+./aviaweather.sh UHPP taf
 
 # Получить и METAR и TAF для Сочи
-./metar-decoder.sh URSS all
+./aviaweather.sh URSS all
 
 # Расшифровать готовый METAR
-./metar-decoder.sh "METAR UUEE 141030Z 01004MPS 9999 SCT020 02/M01 Q1013 NOSIG"
+./aviaweather.sh "METAR UUEE 141030Z 01004MPS 9999 SCT020 02/M01 Q1013 NOSIG"
 
 # Показать список известных аэропортов
-./metar-decoder.sh --list-airports
+./aviaweather.sh --list-airports
 ```
 
 ## 🎯 Что расшифровывает скрипт
