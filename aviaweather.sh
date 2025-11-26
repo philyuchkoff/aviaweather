@@ -4,10 +4,8 @@
 # Использование: ./aviaweather.sh UHWW
 
 # Цвета для вывода
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[0;37m'
@@ -236,8 +234,8 @@ parse_temperature() {
 # Функция для разбора METAR
 parse_metar() {
     local metar=$1
-    echo -e "${BLUE}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
-    echo -e "${CYAN}Исходный METAR: $metar${NC}"
+    echo -e "${CYAN}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
+    echo -e "${WHITE}Исходный METAR: $metar${NC}"
     echo ""
     
     # Разбиваем на компоненты
@@ -322,7 +320,7 @@ parse_metar() {
             # Облачность
             FEW[0-9][0-9][0-9]|SCT[0-9][0-9][0-9]|BKN[0-9][0-9][0-9]|OVC[0-9][0-9][0-9]|VV[0-9][0-9][0-9])
                 local cloud_text=$(decode_clouds "$part")
-                echo -e "${BLUE}☁️  Облачность: $cloud_text${NC}"
+                echo -e "${CYAN}☁️  Облачность: $cloud_text${NC}"
                 ;;
             
             # Температура/роса (универсальная обработка)
@@ -330,7 +328,7 @@ parse_metar() {
                 if [[ $part =~ ^[M]?[0-9]{1,2}/[M]?[0-9]{1,2}$ ]]; then
                     parse_temperature "$part"
                 else
-                    echo -e "${RED}❓ Неизвестный код: $part${NC}"
+                    echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
                 fi
                 ;;
             
@@ -373,7 +371,7 @@ parse_metar() {
             
             *)
                 # Неизвестные коды
-                echo -e "${RED}❓ Неизвестный код: $part${NC}"
+                echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
                 ;;
         esac
     done
@@ -383,7 +381,7 @@ parse_metar() {
 main() {
     # Проверяем наличие curl
     if ! command -v curl &> /dev/null; then
-        echo -e "${RED}❌ Ошибка: curl не установлен${NC}"
+        echo -e "${YELLOW}❌ Ошибка: curl не установлен${NC}"
         echo "Установите curl:"
         echo "  macOS: brew install curl"
         echo "  Linux: sudo apt install curl"
@@ -407,7 +405,7 @@ main() {
     
     # Проверяем валидность кода ICAO
     if ! is_valid_icao "$icao"; then
-        echo -e "${RED}❌ Неверный код ICAO: $icao${NC}"
+        echo -e "${YELLOW}❌ Неверный код ICAO: $icao${NC}"
         echo "Код ICAO должен состоять из 4 латинских букв"
         exit 1
     fi
@@ -415,7 +413,7 @@ main() {
     # Информация об аэропорте
     local airport_info=$(get_airport_info "$icao")
     echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
-    echo -e "${BLUE}🕐 Время запроса: $(date)${NC}"
+    echo -e "${CYAN}🕐 Время запроса: $(date)${NC}"
     echo ""
     
     # Получаем и декодируем METAR
@@ -423,7 +421,7 @@ main() {
     if [[ -n "$metar" ]]; then
         parse_metar "$metar"
     else
-        echo -e "${RED}❌ Не удалось получить METAR для $icao${NC}"
+        echo -e "${YELLOW}❌ Не удалось получить METAR для $icao${NC}"
         echo -e "${YELLOW}Проверьте:"
         echo -e "  • Соединение с интернетом"
         echo -e "  • Корректность кода ICAO"
