@@ -3,7 +3,7 @@
 # AVIAWEATHER Decoder - совместимый с старыми версиями Bash
 # Использование: ./aviaweather.sh UHPP
 
-# Цвета для вывода
+# Цвета для вывода (убраны RED и BLUE для лучшей читаемости на черном фоне)
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 PURPLE='\033[0;35m'
@@ -366,6 +366,18 @@ is_weather_code() {
     return 1
 }
 
+# Функция для проверки является ли код информацией о ВПП
+is_runway_code() {
+    local code=$1
+    [[ $code =~ ^R[0-9][0-9].*/.* ]]
+}
+
+# Функция для проверки является ли код QFE
+is_qfe_code() {
+    local code=$1
+    [[ $code =~ ^QFE[0-9].* ]]
+}
+
 # Функция для разбора METAR
 parse_metar() {
     local metar=$1
@@ -377,6 +389,29 @@ parse_metar() {
     IFS=' ' read -ra parts <<< "$metar"
     
     for part in "${parts[@]}"; do
+        # Сначала проверяем специальные коды
+        if is_runway_code "$part"; then
+            local runway_info=$(decode_runway_state "$part")
+            echo -e "${CYAN}$runway_info${NC}"
+            continue
+        fi
+        
+        if is_qfe_code "$part"; then
+            if [[ $part == *"/"* ]]; then
+                # Формат QFE757/1009
+                local qfe_part=${part:3}
+                local qfe_mm=${qfe_part%/*}
+                local qfe_hpa=${qfe_part#*/}
+                echo -e "${CYAN}📊 Давление на ВПП (QFE): $qfe_mm мм рт.ст. ($qfe_hpa гПа)${NC}"
+            else
+                # Простой формат QFE
+                local qfe_value=${part:3}
+                echo -e "${CYAN}📊 Давление на ВПП (QFE): $qfe_value гПа${NC}"
+            fi
+            continue
+        fi
+        
+        # Затем стандартные коды
         case $part in
             # Типы METAR
             "METAR"|"SPECI")
@@ -502,39 +537,14 @@ parse_metar() {
                 ;;
             
             *)
-                # Проверяем специальные коды
-                case $part in
-                    # Информация о состоянии ВПП (Rxx/xxxxxx)
-                    R[0-9][0-9]*/*)
-                        local runway_info=$(decode_runway_state "$part")
-                        echo -e "${CYAN}$runway_info${NC}"
-                        ;;
-                    
-                    # QFE - давление на уровне аэродрома (формат QFE757/1009)
-                    QFE[0-9]*/*)
-                        local qfe_part=${part:3}
-                        local qfe_mm=${qfe_part%/*}
-                        local qfe_hpa=${qfe_part#*/}
-                        echo -e "${CYAN}📊 Давление на ВПП (QFE): $qfe_mm мм рт.ст. ($qfe_hpa гПа)${NC}"
-                        ;;
-                    
-                    # QFE - давление на уровне аэродрома (простой формат)
-                    QFE[0-9]*)
-                        local qfe_value=${part:3}
-                        echo -e "${CYAN}📊 Давление на ВПП (QFE): $qfe_value гПа${NC}"
-                        ;;
-                    
-                    *)
-                        # Проверяем является ли код погодным явлением
-                        if is_weather_code "$part"; then
-                            local weather_text=$(decode_complex_weather "$part")
-                            echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
-                        else
-                            # Неизвестные коды
-                            echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
-                        fi
-                        ;;
-                esac
+                # Проверяем является ли код погодным явлением
+                if is_weather_code "$part"; then
+                    local weather_text=$(decode_complex_weather "$part")
+                    echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
+                else
+                    # Неизвестные коды
+                    echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
+                fi
                 ;;
         esac
     done
