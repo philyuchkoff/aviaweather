@@ -3,7 +3,6 @@
 ## Декодер авиационных метеорологических сообщений METAR и TAF на русском языке
 ### Этот скрипт написан for fun. Для навигации всегда используйте официальные источники метеоданных
 
-![Bash Version](https://img.shields.io/badge/Bash-5.0+-blue.svg)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
