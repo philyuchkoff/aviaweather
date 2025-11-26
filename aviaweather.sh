@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AVIAWEATHER Decoder - совместимый с старыми версиями Bash
-# Использование: ./aviaweather.sh UHWW
+# Использование: ./aviaweather.sh UUWW
 
 # Цвета для вывода (убраны RED и BLUE для лучшей читаемости на черном фоне)
 GREEN='\033[0;32m'
@@ -55,7 +55,7 @@ get_weather_phenomena() {
         "BC") echo "Поземок" ;;
         "BL") echo "Низовая метель" ;;
         "DR") echo "Поземная пыль/песок" ;;
-        *) echo "Неизвестное явление" ;;
+        *) echo "" ;;
     esac
 }
 
@@ -147,55 +147,36 @@ decode_complex_weather() {
     
     # Разбираем комбинированные коды
     local temp_code=$main_code
+    local found_valid=0
+    
     while [[ ${#temp_code} -ge 2 ]]; do
-        case ${temp_code:0:2} in
-            "TS") result+="гроза, "; temp_code=${temp_code:2} ;;
-            "SH") result+="ливень, "; temp_code=${temp_code:2} ;;
-            "FZ") result+="переохлажденный, "; temp_code=${temp_code:2} ;;
-            "MI") result+="мелкий, "; temp_code=${temp_code:2} ;;
-            "PR") result+="частичный, "; temp_code=${temp_code:2} ;;
-            "BC") result+="поземок, "; temp_code=${temp_code:2} ;;
-            "BL") result+="низовая метель, "; temp_code=${temp_code:2} ;;
-            "DR") result+="поземная пыль, "; temp_code=${temp_code:2} ;;
-            "DZ") result+="морось, "; temp_code=${temp_code:2} ;;
-            "RA") result+="дождь, "; temp_code=${temp_code:2} ;;
-            "SN") result+="снег, "; temp_code=${temp_code:2} ;;
-            "SG") result+="снежные зерна, "; temp_code=${temp_code:2} ;;
-            "IC") result+="ледяные иглы, "; temp_code=${temp_code:2} ;;
-            "PL") result+="ледяной дождь, "; temp_code=${temp_code:2} ;;
-            "GR") result+="град, "; temp_code=${temp_code:2} ;;
-            "GS") result+="мелкий град, "; temp_code=${temp_code:2} ;;
-            "UP") result+="неизвестные осадки, "; temp_code=${temp_code:2} ;;
-            "BR") result+="дымка, "; temp_code=${temp_code:2} ;;
-            "FG") result+="туман, "; temp_code=${temp_code:2} ;;
-            "FU") result+="дым, "; temp_code=${temp_code:2} ;;
-            "VA") result+="вулканический пепел, "; temp_code=${temp_code:2} ;;
-            "DU") result+="пыль, "; temp_code=${temp_code:2} ;;
-            "SA") result+="песок, "; temp_code=${temp_code:2} ;;
-            "HZ") result+="мгла, "; temp_code=${temp_code:2} ;;
-            "PY") result+="брызги, "; temp_code=${temp_code:2} ;;
-            "PO") result+="пыльные вихри, "; temp_code=${temp_code:2} ;;
-            "SQ") result+="шквал, "; temp_code=${temp_code:2} ;;
-            "FC") result+="воронкообразное облако, "; temp_code=${temp_code:2} ;;
-            "SS") result+="песчаная буря, "; temp_code=${temp_code:2} ;;
-            "DS") result+="пыльная буря, "; temp_code=${temp_code:2} ;;
-            *) 
-                # Если не нашли совпадение, пробуем взять один символ
-                local single_char=$(get_weather_phenomena "${temp_code:0:1}")
-                if [[ "$single_char" != "Неизвестное явление" ]]; then
-                    result+="$single_char, "
-                    temp_code=${temp_code:1}
-                else
-                    result+="неизвестное явление, "
-                    temp_code=${temp_code:1}
-                fi
-                ;;
-        esac
+        local phenomenon=$(get_weather_phenomena "${temp_code:0:2}")
+        if [[ -n "$phenomenon" ]]; then
+            result+="$phenomenon, "
+            found_valid=1
+            temp_code=${temp_code:2}
+        else
+            # Если не нашли совпадение из 2 символов, пробуем 1 символ
+            local single_char=$(get_weather_phenomena "${temp_code:0:1}")
+            if [[ -n "$single_char" ]]; then
+                result+="$single_char, "
+                found_valid=1
+                temp_code=${temp_code:1}
+            else
+                # Пропускаем неизвестные символы
+                temp_code=${temp_code:1}
+            fi
+        fi
     done
     
     # Убираем последнюю запятую и пробел
     result=${result%, }
-    echo "$result"
+    
+    if [[ $found_valid -eq 0 ]]; then
+        echo ""
+    else
+        echo "$result"
+    fi
 }
 
 # Функция для декодирования облачности
@@ -299,7 +280,10 @@ is_weather_code() {
     local code=$1
     # Проверяем коды с интенсивностью (+RA, -SN, etc) и комбинированные коды
     if [[ $code =~ ^[+-]?[A-Z]{2,}$ ]]; then
-        return 0
+        local weather_text=$(decode_complex_weather "$code")
+        if [[ -n "$weather_text" ]]; then
+            return 0
+        fi
     fi
     return 1
 }
@@ -316,6 +300,11 @@ parse_metar() {
     
     for part in "${parts[@]}"; do
         case $part in
+            # Типы METAR
+            "METAR"|"SPECI")
+                echo -e "${CYAN}📊 Тип: $part${NC}"
+                ;;
+            
             # Станция
             [A-Z][A-Z][A-Z][A-Z])
                 echo -e "${GREEN}📍 Станция: $part${NC}"
@@ -432,7 +421,7 @@ parse_metar() {
                 ;;
             
             # Коды для пропуска
-            METAR|COR|AUTO)
+            COR|AUTO)
                 # Игнорируем служебные коды
                 ;;
             
