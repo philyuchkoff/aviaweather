@@ -2,10 +2,10 @@
 
 # METAR/TAF Decoder - расшифровка авиационных прогнозов с авто-получением данных
 # Использование: 
-#   ./metar-decoder.sh "METAR TEXT"    - декодирование готового METAR
-#   ./metar-decoder.sh UUEE            - автоматическое получение и декодирование METAR для Шереметьево
-#   ./metar-decoder.sh UUEE taf        - получение и декодирование TAF
-#   ./metar-decoder.sh --file filename - чтение из файла
+#   ./aviaweather.sh "METAR TEXT"    - декодирование готового METAR
+#   ./aviaweather.sh UUEE            - автоматическое получение и декодирование METAR для Шереметьево
+#   ./aviaweather.sh UUEE taf        - получение и декодирование TAF
+#   ./aviaweather.sh --file filename - чтение из файла
 
 # Цвета для вывода
 RED='\033[0;31m'
