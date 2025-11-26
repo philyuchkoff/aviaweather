@@ -193,7 +193,7 @@ fetch_from_backup_source() {
             echo "METAR UUWW $(date -u +%d%H%M)Z 00000MPS 3500 BR SCT010 OVC020 03/02 Q1015"
             ;;
         UHWW)
-            echo "METAR UHWW $(date -u +%d%H%M)Z 08001MPS 9999 SCT033 M02/M10 Q1022 R25L/0///70 NOSIG RMK QFE765"
+            echo "METAR UHWW $(date -u +%d%H%M)Z 08001MPS 9999 SCT033 M03/M09 Q1022 R25L/0///70 NOSIG RMK QFE765"
             ;;
         UHPP)
             echo "METAR UHPP $(date -u +%d%H%M)Z 36008G12MPS 6000 -SN BKN015 M02/M04 Q0988"
@@ -213,10 +213,57 @@ is_valid_icao() {
     [[ ${#icao} -eq 4 ]] && [[ "$icao" =~ ^[A-Z]{4}$ ]]
 }
 
+# Функция для обработки температуры
+parse_temperature() {
+    local part=$1
+    local temp_part=${part%/*}
+    local dew_part=${part#*/}
+    
+    # Обработка температуры
+    if [[ ${temp_part:0:1} == "M" ]]; then
+        local temp="-${temp_part:1}"
+    else
+        local temp="$temp_part"
+    fi
+    
+    # Обработка точки росы
+    if [[ ${dew_part:0:1} == "M" ]]; then
+        local dew="-${dew_part:1}"
+    else
+        local dew="$dew_part"
+    fi
+    
+    echo -e "${GREEN}🌡 Температура: ${temp}°C, Точка росы: ${dew}°C${NC}"
+    
+    # Расчет вероятности тумана
+    local temp_num=$(echo "$temp" | sed 's/[^0-9-]//g')
+    local dew_num=$(echo "$dew" | sed 's/[^0-9-]//g')
+    
+    if [[ "$temp" == -* ]] || [[ "$temp" == M* ]]; then
+        temp_num="-$temp_num"
+    fi
+    if [[ "$dew" == -* ]] || [[ "$dew" == M* ]]; then
+        dew_num="-$dew_num"
+    fi
+    
+    # Преобразуем в числа для вычислений
+    temp_num=$((temp_num))
+    dew_num=$((dew_num))
+    
+    local diff=$((temp_num - dew_num))
+    if [[ $diff -lt 0 ]]; then
+        diff=$(( -diff ))
+    fi
+    
+    if [[ $diff -lt 3 ]]; then
+        echo -e "${YELLOW}⚠️  Высокая вероятность тумана (малая разница температур)${NC}"
+    fi
+}
+
 # Функция для разбора METAR
 parse_metar() {
     local metar=$1
-    echo -e "${GREEN}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
+    echo -e "${BLUE}=== ДЕКОДИРОВАНИЕ METAR ===${NC}"
     echo -e "${CYAN}Исходный METAR: $metar${NC}"
     echo ""
     
@@ -305,43 +352,12 @@ parse_metar() {
                 echo -e "${BLUE}☁️  Облачность: $cloud_text${NC}"
                 ;;
             
-            # Температура/роса (исправленная обработка)
-            M?[0-9][0-9]/M?[0-9][0-9])
-                local temp_part=${part%/*}
-                local dew_part=${part#*/}
-                
-                # Температура
-                if [[ ${temp_part:0:1} == "M" ]]; then
-                    local temp="-${temp_part:1}"
+            # Температура/роса (универсальная обработка)
+            */*)
+                if [[ $part =~ ^[M]?[0-9]{1,2}/[M]?[0-9]{1,2}$ ]]; then
+                    parse_temperature "$part"
                 else
-                    local temp="$temp_part"
-                fi
-                
-                # Точка росы
-                if [[ ${dew_part:0:1} == "M" ]]; then
-                    local dew="-${dew_part:1}"
-                else
-                    local dew="$dew_part"
-                fi
-                
-                echo -e "${GREEN}🌡 Температура: ${temp}°C, Точка росы: ${dew}°C${NC}"
-                
-                # Расчет тумана (упрощенный)
-                temp_num=$(echo "$temp" | sed 's/[^0-9-]//g')
-                dew_num=$(echo "$dew" | sed 's/[^0-9-]//g')
-                if [[ "$temp" == M* ]]; then
-                    temp_num="-$temp_num"
-                fi
-                if [[ "$dew" == M* ]]; then
-                    dew_num="-$dew_num"
-                fi
-                if [[ $temp_num -lt $dew_num ]]; then
-                    diff=$((dew_num - temp_num))
-                else
-                    diff=$((temp_num - dew_num))
-                fi
-                if [[ $diff -lt 3 ]]; then
-                    echo -e "${YELLOW}⚠️  Высокая вероятность тумана (малая разница температур)${NC}"
+                    echo -e "${RED}❓ Неизвестный код: $part${NC}"
                 fi
                 ;;
             
@@ -426,7 +442,7 @@ main() {
     # Информация об аэропорте
     local airport_info=$(get_airport_info "$icao")
     echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
-    echo -e "${GREEN}🕐 Время запроса: $(date)${NC}"
+    echo -e "${BLUE}🕐 Время запроса: $(date)${NC}"
     echo ""
     
     # Получаем и декодируем METAR
