@@ -2,13 +2,15 @@
 
 # AVIAWEATHER Decoder - совместимый с старыми версиями Bash
 # Использование: ./aviaweather.sh UHPP
-# рабочая версия до добавления декодера TAF
 
 # Цвета для вывода
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 WHITE='\033[0;37m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Функции для работы с данными вместо ассоциативных массивов
@@ -96,6 +98,9 @@ decode_wind_direction() {
     deg=$(echo "$deg" | sed 's/^0*//')
     deg=${deg:-0}  # Если строка пустая, устанавливаем 0
     
+    # Преобразуем в число
+    deg=$((deg))
+    
     if [[ $deg -eq 0 ]] || [[ $deg -eq 360 ]]; then
         echo "Северный"
     elif [[ $deg -gt 0 ]] && [[ $deg -lt 90 ]]; then
@@ -138,17 +143,23 @@ decode_visibility() {
 # Функция для декодирования состояния ВПП
 decode_runway_state() {
     local code=$1
-    local runway=${code:0:4}  # R34L
-    local state=${code:5}     # 490233
+    local runway=$(echo "$code" | grep -o '^R[0-9LCRA]*/' | sed 's|/$||')
+    local state=$(echo "$code" | sed "s|^$runway/||")
     
-    local result="🛬 ВПП ${runway}: "
+    local result="🛬 ВПП ${runway:1}: "
+    
+    if [[ -z "$state" || "$state" == "$code" ]]; then
+        result+="Информация о состоянии ВПП"
+        echo "$result"
+        return
+    fi
     
     # Декодируем состояние ВПП по цифрам
     if [[ ${#state} -ge 6 ]]; then
-        local deposit=${state:0:1}    # 4 - отложения
+        local deposit=${state:0:1}    # 2 - отложения
         local extent=${state:1:1}     # 9 - покрытие
-        local depth=${state:2:2}      # 02 - глубина
-        local friction=${state:4:2}   # 33 - трение
+        local depth=${state:2:2}      # 00 - глубина
+        local friction=${state:4:2}   # 50 - трение
         
         case $deposit in
             "0") result+="Чистая и сухая" ;;
@@ -175,18 +186,84 @@ decode_runway_state() {
             *) result+="неизвестно" ;;
         esac
         
-        if [[ $depth != "//" ]]; then
+        if [[ $depth != "//" && $depth != "00" ]]; then
+            # Убираем ведущие нули
+            depth=$(echo "$depth" | sed 's/^0*//')
+            depth=${depth:-0}
             result+=", глубина: ${depth}мм"
         fi
         
         if [[ $friction != "//" ]]; then
+            # Убираем ведущие нули
+            friction=$(echo "$friction" | sed 's/^0*//')
+            friction=${friction:-0}
             result+=", трение: 0.${friction}"
         fi
     else
-        result+="Информация о состоянии ВПП"
+        result+="Состояние: $state"
     fi
     
     echo "$result"
+}
+
+# Функция для декодирования NOTAM кодов
+decode_notam_code() {
+    local notam_code=$1
+    
+    case $notam_code in
+        "QBB"*)
+            echo "NOTAM Германия - информация о воздушном пространстве" ;;
+        "QFE"*)
+            echo "Давление на уровне аэродрома" ;;
+        "QNH"*)
+            echo "Давление на уровне моря" ;;
+        "QNE"*)
+            echo "Высота по давлению" ;;
+        "RVR"*)
+            echo "Видимость на ВПП" ;;
+        "WS"*)
+            echo "Сдвиг ветра" ;;
+        "RWY"*)
+            echo "Состояние ВПП" ;;
+        "SFC"*)
+            echo "Состояние поверхности" ;;
+        "CLD"*)
+            echo "Облачность" ;;
+        "WX"*)
+            echo "Погодные явления" ;;
+        "TMP"*)
+            echo "Температура" ;;
+        "VIS"*)
+            echo "Видимость" ;;
+        "WIND"*)
+            echo "Ветер" ;;
+        "APCH"*)
+            echo "Заход на посадку" ;;
+        "DEP"*)
+            echo "Вылет" ;;
+        "ENR"*)
+            echo "Маршрут" ;;
+        "ADC"*)
+            echo "Аэродромные данные" ;;
+        "RAC"*)
+            echo "Правила полетов и обслуживания" ;;
+        "COM"*)
+            echo "Связь" ;;
+        "NAV"*)
+            echo "Навигация" ;;
+        "OAT"*)
+            echo "Наружная температура" ;;
+        "SIG"*)
+            echo "Значительные явления" ;;
+        "SPECI"*)
+            echo "Специальный отчет" ;;
+        "METAR"*)
+            echo "Стандартный отчет" ;;
+        "TAF"*)
+            echo "Прогноз" ;;
+        *)
+            echo "Служебный код NOTAM" ;;
+    esac
 }
 
 # Функция для декодирования комбинированных погодных явлений
@@ -298,13 +375,30 @@ fetch_metar() {
     fi
 }
 
+# Функция для получения TAF из интернета
+fetch_taf() {
+    local icao=$1
+    echo -e "${CYAN}🛰 Загрузка TAF для $icao...${NC}" >&2
+    
+    local taf=""
+    
+    # Источник: aviationweather.gov
+    taf=$(curl -s --connect-timeout 10 "https://aviationweather.gov/api/data/taf?ids=$icao&format=raw" 2>/dev/null)
+    
+    if [[ -n "$taf" && ${#taf} -gt 10 && "$taf" != *"404"* && "$taf" != *"No TAF"* ]]; then
+        echo "$taf"
+    else
+        echo ""
+    fi
+}
+
 # Функция для проверки валидности кода ICAO
 is_valid_icao() {
     local icao=$1
     [[ ${#icao} -eq 4 ]] && [[ "$icao" =~ ^[A-Z]{4}$ ]]
 }
 
-# Функция для обработки температуры
+# Функция для обработки температуры (безопасная версия)
 parse_temperature() {
     local part=$1
     local temp_part=${part%/*}
@@ -520,6 +614,10 @@ parse_metar() {
                 if is_weather_code "$part"; then
                     local weather_text=$(decode_complex_weather "$part")
                     echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
+                elif [[ $part == Q* ]] && [[ ${#part} -ge 4 ]]; then
+                    # Обработка NOTAM кодов (начинаются с Q)
+                    local notam_info=$(decode_notam_code "$part")
+                    echo -e "${PURPLE}📋 NOTAM: $notam_info${NC}"
                 else
                     # Неизвестные коды
                     echo -e "${YELLOW}❓ Неизвестный код: $part${NC}"
@@ -527,6 +625,252 @@ parse_metar() {
                 ;;
         esac
     done
+}
+
+# Функция для разбора TAF
+parse_taf() {
+    local taf=$1
+    echo -e "${CYAN}=== ДЕКОДИРОВАНИЕ TAF ===${NC}"
+    echo -e "${WHITE}Исходный TAF: $taf${NC}"
+    echo ""
+    
+    # Разбиваем на компоненты
+    IFS=' ' read -ra parts <<< "$taf"
+    
+    local current_section="main"
+    local period_start=""
+    local period_end=""
+    local is_first_line=true
+
+    for part in "${parts[@]}"; do
+        # Пропускаем пустые элементы
+        if [[ -z "$part" ]]; then
+            continue
+        fi
+
+        # Обработка первой строки TAF (основная информация)
+        if $is_first_line; then
+            case $part in
+                "TAF")
+                    echo -e "${GREEN}📊 Тип: TAF (Terminal Aerodrome Forecast)${NC}"
+                    ;;
+                "AMD")
+                    echo -e "${YELLOW}🔄 Исправленный TAF${NC}"
+                    ;;
+                [A-Z][A-Z][A-Z][A-Z])
+                    echo -e "${GREEN}📍 Станция: $part${NC}"
+                    ;;
+                [0-9][0-9][0-9][0-9][0-9][0-9]Z)
+                    local day=${part:0:2}
+                    local time="${part:2:2}:${part:4:2}"
+                    echo -e "${GREEN}📅 Дата выпуска: ${day}-е число, время: ${time} UTC${NC}"
+                    ;;
+                [0-9][0-9][0-9][0-9]/[0-9][0-9][0-9][0-9])
+                    period_start="${part:0:2}:${part:2:2}"
+                    period_end="${part:5:2}:${part:7:2}"
+                    echo -e "${PURPLE}📅 Период действия: с ${period_start}Z по ${period_end}Z${NC}"
+                    ;;
+                *)
+                    # Если это не служебное слово, пробуем распарсить как погодный элемент
+                    parse_taf_component "$part" "$current_section"
+                    ;;
+            esac
+            
+            # Проверяем, закончилась ли первая строка
+            if [[ $part =~ [0-9]{4}/[0-9]{4} ]]; then
+                is_first_line=false
+            fi
+            continue
+        fi
+
+        # Обработка временных групп (после первой строки)
+        case $part in
+            "BECMG")
+                echo ""
+                echo -e "${BLUE}🔄 Постепенное изменение${NC}"
+                current_section="becmg"
+                ;;
+            "TEMPO")
+                echo ""
+                echo -e "${YELLOW}⏱️ Временные изменения${NC}"
+                current_section="tempo"
+                ;;
+            "FM"*)
+                # С какого времени
+                if [[ $part =~ ^FM[0-9]{4}$ ]]; then
+                    local time="${part:2:2}:${part:4:2}"
+                    echo ""
+                    echo -e "${CYAN}🕐 С $timeZ${NC}"
+                    current_section="fm"
+                else
+                    parse_taf_component "$part" "$current_section"
+                fi
+                ;;
+            "TL"*)
+                # До какого времени
+                if [[ $part =~ ^TL[0-9]{4}$ ]]; then
+                    local time="${part:2:2}:${part:4:2}"
+                    echo -e "${CYAN}🕐 До $timeZ${NC}"
+                else
+                    parse_taf_component "$part" "$current_section"
+                fi
+                ;;
+            "AT"*)
+                # В определенное время
+                if [[ $part =~ ^AT[0-9]{4}$ ]]; then
+                    local time="${part:2:2}:${part:4:2}"
+                    echo -e "${CYAN}🕐 В $timeZ${NC}"
+                else
+                    parse_taf_component "$part" "$current_section"
+                fi
+                ;;
+            "PROB"*)
+                # Вероятность
+                if [[ $part =~ ^PROB[0-9]{2}$ ]]; then
+                    local prob=${part:4:2}
+                    echo -e "${PURPLE}🎲 Вероятность: ${prob}%${NC}"
+                else
+                    parse_taf_component "$part" "$current_section"
+                fi
+                ;;
+            "TX"*|"TN"*)
+                # Экстремальные температуры
+                parse_temperature_extreme "$part"
+                ;;
+            *)
+                # Обработка погодных компонентов
+                parse_taf_component "$part" "$current_section"
+                ;;
+        esac
+    done
+}
+
+# Функция для обработки экстремальных температур в TAF
+parse_temperature_extreme() {
+    local part=$1
+    
+    if [[ $part == TX* ]]; then
+        # Максимальная температура
+        local temp_part=${part:2}
+        local temp=${temp_part%/*}
+        local time=${temp_part#*/}
+        time="${time:0:2}:${time:2:2}"
+        
+        if [[ ${temp:0:1} == "M" ]]; then
+            local temp_value="-${temp:1}"
+        else
+            local temp_value="$temp"
+        fi
+        
+        echo -e "${GREEN}🔥 Максимальная температура: ${temp_value}°C (в ${time}Z)${NC}"
+        
+    elif [[ $part == TN* ]]; then
+        # Минимальная температура
+        local temp_part=${part:2}
+        local temp=${temp_part%/*}
+        local time=${temp_part#*/}
+        time="${time:0:2}:${time:2:2}"
+        
+        if [[ ${temp:0:1} == "M" ]]; then
+            local temp_value="-${temp:1}"
+        else
+            local temp_value="$temp"
+        fi
+        
+        echo -e "${BLUE}❄️  Минимальная температура: ${temp_value}°C (в ${time}Z)${NC}"
+    fi
+}
+
+# Функция для обработки компонентов TAF
+parse_taf_component() {
+    local part=$1
+    local section=$2
+    
+    # Используем существующие функции декодирования с небольшими модификациями
+    
+    # Ветер
+    if [[ $part =~ ^[0-9]{5}(G[0-9]+)?(KT|MPS)$ ]] || [[ $part =~ ^VRB[0-9]{2}(G[0-9]+)?(KT|MPS)$ ]]; then
+        if [[ $part == VRB* ]]; then
+            local speed=$(echo "$part" | grep -o '[0-9]*' | head -1)
+            local unit=$(echo "$part" | grep -o '[A-Z]*$')
+            speed=$(echo "$speed" | sed 's/^0*//')
+            speed=${speed:-0}
+            if [[ $unit == "MPS" ]]; then
+                echo -e "${GREEN}💨 Ветер: Переменный $speed м/с${NC}"
+            else
+                echo -e "${GREEN}💨 Ветер: Переменный $speed узлов${NC}"
+            fi
+        elif [[ $part == *"G"* ]]; then
+            local dir=${part:0:3}
+            local speed=${part:3:2}
+            local gust=$(echo "$part" | grep -o 'G[0-9]*' | sed 's/G//')
+            local unit=$(echo "$part" | grep -o '[A-Z]*$')
+            dir=$(echo "$dir" | sed 's/^0*//')
+            dir=${dir:-0}
+            speed=$(echo "$speed" | sed 's/^0*//')
+            speed=${speed:-0}
+            gust=$(echo "$gust" | sed 's/^0*//')
+            gust=${gust:-0}
+            local direction_text=$(decode_wind_direction "$dir")
+            if [[ $unit == "MPS" ]]; then
+                echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с с порывами до $gust м/с${NC}"
+            else
+                echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов с порывами до $gust узлов${NC}"
+            fi
+        else
+            local dir=${part:0:3}
+            local speed=${part:3:2}
+            local unit=${part:5}
+            dir=$(echo "$dir" | sed 's/^0*//')
+            dir=${dir:-0}
+            speed=$(echo "$speed" | sed 's/^0*//')
+            speed=${speed:-0}
+            local direction_text=$(decode_wind_direction "$dir")
+            if [[ $unit == "MPS" ]]; then
+                echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с${NC}"
+            else
+                local speed_kmh=$((speed * 2))
+                echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов (~$speed_kmh км/ч)${NC}"
+            fi
+        fi
+    
+    # Видимость (включая значения менее 1000 метров)
+    elif [[ $part == "9999" ]] || [[ $part == "CAVOK" ]] || [[ $part =~ ^[0-9]{4}$ ]] || [[ $part =~ ^[0-9]{3}$ ]]; then
+        if [[ $part == "CAVOK" ]]; then
+            echo -e "${GREEN}👁 Видимость: Отличная (CAVOK)${NC}"
+            echo -e "${GREEN}☁️  Облачность: Нет облаков ниже 5000 футов${NC}"
+            echo -e "${GREEN}🌤 Погода: Нет значительных явлений${NC}"
+        elif [[ $part == "9999" ]]; then
+            echo -e "${GREEN}👁 Видимость: 10+ км (отличная видимость)${NC}"
+        else
+            local vis_text=$(decode_visibility "$part")
+            echo -e "${GREEN}👁 Видимость: $vis_text${NC}"
+        fi
+    
+    # Облачность
+    elif [[ $part =~ ^(FEW|SCT|BKN|OVC|VV)[0-9]{3} ]]; then
+        local cloud_text=$(decode_clouds "$part")
+        echo -e "${CYAN}☁️  Облачность: $cloud_text${NC}"
+    
+    # Погодные явления
+    elif is_weather_code "$part"; then
+        local weather_text=$(decode_complex_weather "$part")
+        echo -e "${YELLOW}🌧 Погодные явления: $weather_text${NC}"
+    
+    # Температура (для основной части TAF)
+    elif [[ $part =~ ^[M]?[0-9]{2}/[M]?[0-9]{2}$ ]]; then
+        parse_temperature "$part"
+    
+    # Давление
+    elif [[ $part =~ ^Q[0-9]{4}$ ]]; then
+        local pressure=${part:1}
+        local pressure_mm=$((pressure * 3 / 4))
+        echo -e "${GREEN}📊 Давление: $pressure гПа (~$pressure_mm мм рт.ст.)${NC}"
+    
+    else
+        # Неизвестные коды в TAF
+        echo -e "${YELLOW}❓ Неизвестный код TAF: $part${NC}"
+    fi
 }
 
 # Главная функция
@@ -568,16 +912,41 @@ main() {
     echo -e "${CYAN}🕐 Время запроса: $(date)${NC}"
     echo ""
     
-    # Получаем и декодируем METAR
-    local metar=$(fetch_metar "$icao")
-    if [[ -n "$metar" ]]; then
-        parse_metar "$metar"
+    # Выбор типа данных
+    echo "Выберите тип данных:"
+    echo "1. METAR (текущая погода)"
+    echo "2. TAF (прогноз погоды)"
+    read -p "Ваш выбор [1]: " data_type
+    data_type=${data_type:-1}
+    
+    if [[ $data_type -eq 1 ]]; then
+        # Получаем и декодируем METAR
+        local metar=$(fetch_metar "$icao")
+        if [[ -n "$metar" ]]; then
+            parse_metar "$metar"
+        else
+            echo -e "${YELLOW}❌ Не удалось получить METAR для $icao${NC}"
+            echo -e "${YELLOW}Проверьте:"
+            echo -e "  • Соединение с интернетом"
+            echo -e "  • Корректность кода ICAO"
+            echo -e "  • Доступность метеосервисов${NC}"
+            exit 1
+        fi
+    elif [[ $data_type -eq 2 ]]; then
+        # Получаем и декодируем TAF
+        local taf=$(fetch_taf "$icao")
+        if [[ -n "$taf" ]]; then
+            parse_taf "$taf"
+        else
+            echo -e "${YELLOW}❌ Не удалось получить TAF для $icao${NC}"
+            echo -e "${YELLOW}Проверьте:"
+            echo -e "  • Соединение с интернетом"
+            echo -e "  • Корректность кода ICAO"
+            echo -e "  • Доступность TAF для этого аэропорта${NC}"
+            exit 1
+        fi
     else
-        echo -e "${YELLOW}❌ Не удалось получить METAR для $icao${NC}"
-        echo -e "${YELLOW}Проверьте:"
-        echo -e "  • Соединение с интернетом"
-        echo -e "  • Корректность кода ICAO"
-        echo -e "  • Доступность метеосервисов${NC}"
+        echo -e "${RED}❌ Неверный выбор${NC}"
         exit 1
     fi
 }
