@@ -2,6 +2,7 @@
 
 # NOTAM Fetcher - получение NOTAM для аэропортов
 # Использование: ./notam.sh UHPP
+# Реальные NOTAM часто недоступны через бесплатные публичные API
 
 # Цвета для вывода
 GREEN='\033[0;32m'
@@ -43,25 +44,43 @@ is_valid_icao() {
 # Функция для получения NOTAM из публичного API (ограниченная функциональность)
 fetch_notam_public() {
     local icao=$1
+    local notam_data=""
+    local http_code=0
+    
     echo -e "${CYAN}🔍 Поиск NOTAM для $icao...${NC}" >&2
     
-    # Пробуем несколько публичных источников
-    local notam_data=""
-    
     # Источник 1: AviationAPI (ограниченный бесплатный доступ)
-    notam_data=$(curl -s --connect-timeout 10 \
-        "https://api.aviationapi.com/v1/notams/apt?apt=$icao" 2>/dev/null | \
-        head -100)
+    echo -e "${WHITE}Попытка 1: AviationAPI...${NC}" >&2
+    notam_data=$(curl -s --connect-timeout 10 --max-time 15 -w "%{http_code}" \
+        "https://api.aviationapi.com/v1/notams/apt?apt=$icao" 2>/dev/null)
     
-    # Если первый источник не дал результатов, пробуем запасной
-    if [[ -z "$notam_data" || "$notam_data" == *"error"* || "$notam_data" == *"null"* ]]; then
-        # Источник 2: AviationWeather (требует регистрации, но иногда работает)
-        notam_data=$(curl -s --connect-timeout 10 \
-            "https://aviationweather.gov/cgi-bin/data/notams.php?format=decoded&ids=$icao" 2>/dev/null | \
-            grep -A 5 "$icao" | head -20)
+    # Извлекаем HTTP-код (последние 3 символа)
+    http_code=${notam_data: -3}
+    # Извлекаем тело ответа (все, кроме последних 3 символов)
+    notam_data=${notam_data%???}
+    
+    # Успех, если код 200 и данные не пусты и не содержат ошибку
+    if [[ $http_code -eq 200 ]] && [[ -n "$notam_data" ]] && [[ "$notam_data" != *"error"* ]] && [[ "$notam_data" != *"null"* ]]; then
+        echo -e "${GREEN}Данные получены от AviationAPI.${NC}" >&2
+        echo "$notam_data"
+        return 0
     fi
     
-    echo "$notam_data"
+    # Источник 2: Запасной вариант - AviationWeather (пробуем другой формат)
+    echo -e "${YELLOW}Попытка 2: AviationWeather...${NC}" >&2
+    notam_data=$(curl -s --connect-timeout 10 --max-time 15 \
+        "https://aviationweather.gov/cgi-bin/data/notams.php?format=json&ids=$icao" 2>/dev/null)
+    
+    # Проверяем, что данные есть и они не пустые
+    if [[ -n "$notam_data" ]] && [[ "$notam_data" != *"error"* ]] && [[ "$notam_data" != "[]" ]]; then
+        echo -e "${GREEN}Данные получены от AviationWeather.${NC}" >&2
+        echo "$notam_data"
+        return 0
+    fi
+    
+    # Если оба источника не сработали
+    echo -e "${RED}Не удалось получить данные NOTAM из публичных источников.${NC}" >&2
+    return 1
 }
 
 # Функция для парсинга NOTAM из JSON
@@ -70,15 +89,11 @@ parse_notam_json() {
     local icao=$2
     
     if command -v jq &> /dev/null; then
-        local notam_count=$(echo "$json_data" | jq length 2>/dev/null)
-        if [[ $notam_count -gt 0 ]]; then
-            echo "$json_data" | jq -r '.[] | "\(.Number): \(.Message)\nПериод: \(.StartTime) - \(.EndTime)\n"' 2>/dev/null
-        else
-            echo ""
-        fi
+        echo "$json_data" | jq -r '.[] | "\(.Number // .id // "N/A"): \(.Message // .message // .text // "N/A")\nПериод: \(.StartTime // .startTime // "N/A") - \(.EndTime // .endTime // "N/A")\n"' 2>/dev/null
     else
-        # Простой парсинг без jq
-        echo "$json_data" | grep -oP '"Message":"[^"]*"' | sed 's/"Message":"//g' | sed 's/"//g'
+        # Улучшенный парсинг без jq (более устойчивый, но все же ненадежный)
+        # Выводим все, что похоже на текст NOTAM, стараясь отфильтровать мусор
+        echo "$json_data" | grep -oE '" (Message|message|text)"?[ :]*"[^"]*"' | sed 's/"Message":"//g; s/"message":"//g; s/"text":"//g; s/"//g' | head -5
     fi
 }
 
@@ -93,13 +108,13 @@ show_notam_info() {
     echo ""
     
     echo -e "${YELLOW}📊 Статус получения NOTAM:${NC}"
-    echo -e "${RED}❌ Реальные NOTAM недоступны через публичные API${NC}"
+    echo -e "${RED}❌ Реальные NOTAM часто недоступны через бесплатные публичные API${NC}"
     echo ""
     
     echo -e "${CYAN}💡 Почему NOTAM недоступны:${NC}"
-    echo -e "${WHITE}• NOTAM защищены авторским правом${NC}"
-    echo -e "${WHITE}• Требуется авторизация в официальных системах${NC}"
-    echo -e "${WHITE}• Большинство API платные или требуют регистрации${NC}"
+    echo -e "${WHITE}• NOTAM защищены авторским правом и лицензиями${NC}"
+    echo -e "${WHITE}• Требуется авторизация в официальных системах (FAA, Eurocontrol)${NC}"
+    echo -e "${WHITE}• Большинство стабильных API платные или требуют регистрации${NC}"
     echo ""
     
     echo -e "${GREEN}🚀 Альтернативные способы получения NOTAM:${NC}"
@@ -220,16 +235,27 @@ main() {
     # Показываем информационное сообщение
     show_notam_info "$icao"
     
-    # Все равно пробуем получить данные (на случай если API заработает)
-    local notam_data=$(fetch_notam_public "$icao")
-    if [[ -n "$notam_data" && "$notam_data" != *"error"* && "$notam_data" != *"null"* ]]; then
+    # Пробуем получить данные
+    local notam_data
+    notam_data=$(fetch_notam_public "$icao")
+    local fetch_result=$? # Сохраняем код возврата функции fetch
+    
+    if [[ $fetch_result -eq 0 ]] && [[ -n "$notam_data" ]]; then
         echo -e "${GREEN}🎉 Удалось получить некоторые данные:${NC}"
         echo ""
-        if command -v jq &> /dev/null; then
-            parse_notam_json "$notam_data" "$icao"
+        local parsed_data
+        parsed_data=$(parse_notam_json "$notam_data" "$icao")
+        if [[ -n "$parsed_data" ]]; then
+            echo "$parsed_data"
         else
-            echo "$notam_data" | head -10
+            echo -e "${YELLOW}(Не удалось распарсить данные или данные пусты)${NC}"
+            # Для отладки можно показать сырые данные
+            # echo "$notam_data" | head -5
         fi
+        echo ""
+    else
+        echo -e "${YELLOW}⚠️ Не удалось получить актуальные NOTAM из публичных источников.${NC}"
+        echo -e "${YELLOW}   Смотрите альтернативные способы выше.${NC}"
         echo ""
     fi
     
