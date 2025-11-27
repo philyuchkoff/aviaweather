@@ -459,9 +459,9 @@ parse_metar() {
                     gust=${gust:-0}
                     local direction_text=$(decode_wind_direction "$dir")
                     if [[ $unit == "MPS" ]]; then
-                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed м/с с порывами до $gust м/с${NC}"
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir) $speed м/с с порывами до $gust м/с${NC}"
                     else
-                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir°) $speed узлов с порывами до $gust узлов${NC}"
+                        echo -e "${GREEN}💨 Ветер: $direction_text ($dir) $speed узлов с порывами до $gust узлов${NC}"
                     fi
                 else
                     # Обычный ветер
