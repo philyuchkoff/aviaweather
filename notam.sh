@@ -7,6 +7,7 @@
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+RED='\033[0;31m'
 WHITE='\033[0;37m'
 NC='\033[0m' # No Color
 
@@ -39,162 +40,146 @@ is_valid_icao() {
     [[ ${#icao} -eq 4 ]] && [[ "$icao" =~ ^[A-Z]{4}$ ]]
 }
 
-# Функция для получения NOTAM из FAA (США)
-fetch_notam_faa() {
+# Функция для получения NOTAM из публичного API (ограниченная функциональность)
+fetch_notam_public() {
     local icao=$1
-    echo -e "${CYAN}🛫 Получение NOTAM из FAA (США)...${NC}" >&2
+    echo -e "${CYAN}🔍 Поиск NOTAM для $icao...${NC}" >&2
     
-    local notam=$(curl -s --connect-timeout 10 \
-        "https://notams.aim.faa.gov/notamSearch/nsApp.html#/search/icao/$icao" 2>/dev/null | \
-        grep -oP '(?<=<div class="notam-text">)[^<]+' | head -10)
+    # Пробуем несколько публичных источников
+    local notam_data=""
     
-    if [[ -n "$notam" ]]; then
-        echo "$notam"
-    else
-        echo ""
+    # Источник 1: AviationAPI (ограниченный бесплатный доступ)
+    notam_data=$(curl -s --connect-timeout 10 \
+        "https://api.aviationapi.com/v1/notams/apt?apt=$icao" 2>/dev/null | \
+        head -100)
+    
+    # Если первый источник не дал результатов, пробуем запасной
+    if [[ -z "$notam_data" || "$notam_data" == *"error"* || "$notam_data" == *"null"* ]]; then
+        # Источник 2: AviationWeather (требует регистрации, но иногда работает)
+        notam_data=$(curl -s --connect-timeout 10 \
+            "https://aviationweather.gov/cgi-bin/data/notams.php?format=decoded&ids=$icao" 2>/dev/null | \
+            grep -A 5 "$icao" | head -20)
     fi
+    
+    echo "$notam_data"
 }
 
-# Функция для получения NOTAM из Eurocontrol (Европа)
-fetch_notam_eurocontrol() {
-    local icao=$1
-    echo -e "${CYAN}🌍 Получение NOTAM из Eurocontrol...${NC}" >&2
-    
-    local notam=$(curl -s --connect-timeout 10 \
-        "https://www.eurocontrol.int/notams/airport/$icao" 2>/dev/null | \
-        grep -A 5 "notam-item" | sed -n '2p' | sed 's/^[ \t]*//')
-    
-    if [[ -n "$notam" ]]; then
-        echo "$notam"
-    else
-        echo ""
-    fi
-}
-
-# Функция для получения NOTAM из российских источников
-fetch_notam_russia() {
-    local icao=$1
-    echo -e "${CYAN}🇷🇺 Попытка получения NOTAM из российских источников...${NC}" >&2
-    
-    # Попробуем несколько источников
-    local notam=""
-    
-    # Источник 1: aviationweather.gov (международный)
-    notam=$(curl -s --connect-timeout 10 \
-        "https://aviationweather.gov/api/data/notam?ids=$icao&format=raw" 2>/dev/null)
-    
-    if [[ -z "$notam" || "$notam" == *"No NOTAM"* ]]; then
-        # Источник 2: сервис NOTAM API
-        notam=$(curl -s --connect-timeout 10 \
-            "https://api.aviationapi.com/v1/notams/apt?apt=$icao" 2>/dev/null | \
-            jq -r '.[] | .Message' 2>/dev/null | head -5)
-    fi
-    
-    if [[ -n "$notam" ]]; then
-        echo "$notam"
-    else
-        echo ""
-    fi
-}
-
-# Функция для парсинга и форматирования NOTAM
-parse_notam() {
-    local notam_text=$1
+# Функция для парсинга NOTAM из JSON
+parse_notam_json() {
+    local json_data=$1
     local icao=$2
     
-    if [[ -z "$notam_text" ]]; then
-        echo -e "${YELLOW}❌ NOTAM для аэропорта $icao не найдены${NC}"
-        return 1
-    fi
-    
-    echo -e "${CYAN}=== NOTAM ДЛЯ $icao ===${NC}"
-    echo ""
-    
-    # Разбиваем NOTAM на отдельные сообщения
-    IFS=$'\n' read -ra notams <<< "$notam_text"
-    
-    local counter=1
-    for notam in "${notams[@]}"; do
-        if [[ -n "$notam" && ${#notam} -gt 10 ]]; then
-            echo -e "${GREEN}📋 NOTAM #$counter:${NC}"
-            echo -e "${WHITE}$notam${NC}"
+    if command -v jq &> /dev/null; then
+        local notam_count=$(echo "$json_data" | jq length 2>/dev/null)
+        if [[ $notam_count -gt 0 ]]; then
+            echo "$json_data" | jq -r '.[] | "\(.Number): \(.Message)\nПериод: \(.StartTime) - \(.EndTime)\n"' 2>/dev/null
+        else
             echo ""
-            ((counter++))
         fi
-    done
-    
-    if [[ $counter -eq 1 ]]; then
-        echo -e "${YELLOW}⚠️  Активных NOTAM не найдено${NC}"
+    else
+        # Простой парсинг без jq
+        echo "$json_data" | grep -oP '"Message":"[^"]*"' | sed 's/"Message":"//g' | sed 's/"//g'
     fi
 }
 
-# Функция для получения NOTAM из нескольких источников
-fetch_notam_comprehensive() {
-    local icao=$1
-    local all_notams=""
-    
-    echo -e "${CYAN}🔍 Поиск NOTAM для $icao из различных источников...${NC}"
-    echo ""
-    
-    # Пробуем разные источники в зависимости от региона
-    case ${icao:0:1} in
-        "U")  # Россия и СНГ
-            all_notams=$(fetch_notam_russia "$icao")
-            ;;
-        "E")  # Европа
-            all_notams=$(fetch_notam_eurocontrol "$icao")
-            ;;
-        "K")  # США
-            all_notams=$(fetch_notam_faa "$icao")
-            ;;
-        *)    # Остальные - пробуем все
-            all_notams=$(fetch_notam_russia "$icao")
-            if [[ -z "$all_notams" ]]; then
-                all_notams=$(fetch_notam_eurocontrol "$icao")
-            fi
-            if [[ -z "$all_notams" ]]; then
-                all_notams=$(fetch_notam_faa "$icao")
-            fi
-            ;;
-    esac
-    
-    echo "$all_notams"
-}
-
-# Функция для показа примера NOTAM (если реальные данные недоступны)
-show_sample_notam() {
+# Функция для показа информации о доступности NOTAM
+show_notam_info() {
     local icao=$1
     local airport_info=$(get_airport_info "$icao")
     
-    echo -e "${CYAN}=== NOTAM ДЛЯ $icao ===${NC}"
+    echo -e "${CYAN}=== NOTAM ИНФОРМАЦИЯ ДЛЯ $icao ===${NC}"
     echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
     echo -e "${CYAN}🕐 Время запроса: $(date)${NC}"
     echo ""
-    echo -e "${YELLOW}⚠️  Внимание: Реальные NOTAM временно недоступны${NC}"
-    echo -e "${YELLOW}   Показываем пример формата NOTAM:${NC}"
+    
+    echo -e "${YELLOW}📊 Статус получения NOTAM:${NC}"
+    echo -e "${RED}❌ Реальные NOTAM недоступны через публичные API${NC}"
     echo ""
     
-    echo -e "${GREEN}📋 NOTAM #1:${NC}"
-    echo -e "${WHITE}A $icao RWY 25L/07R CLSD DUE TO CONSTRUCTION WORK${NC}"
-    echo -e "${WHITE}FROM: 261200Z TO: 271200Z${NC}"
+    echo -e "${CYAN}💡 Почему NOTAM недоступны:${NC}"
+    echo -e "${WHITE}• NOTAM защищены авторским правом${NC}"
+    echo -e "${WHITE}• Требуется авторизация в официальных системах${NC}"
+    echo -e "${WHITE}• Большинство API платные или требуют регистрации${NC}"
     echo ""
     
-    echo -e "${GREEN}📋 NOTAM #2:${NC}"
-    echo -e "${WHITE}B $icao TWR FREQ 118.7 TEMPORARY U/S${NC}"
-    echo -e "${WHITE}USE 121.5 FOR EMERGENCY ONLY${NC}"
-    echo -e "${WHITE}FROM: 261000Z TO: 261800Z${NC}"
+    echo -e "${GREEN}🚀 Альтернативные способы получения NOTAM:${NC}"
     echo ""
     
-    echo -e "${GREEN}📋 NOTAM #3:${NC}"
-    echo -e "${WHITE}C $icao ILS CAT I U/S${NC}"
-    echo -e "${WHITE}MAINTENANCE IN PROGRESS${NC}"
-    echo -e "${WHITE}FROM: 260800Z TO: 262000Z${NC}"
+    echo -e "${YELLOW}🌐 Официальные веб-сайты:${NC}"
+    echo -e "${WHITE}• FAA (США): https://notams.aim.faa.gov/notamSearch/${NC}"
+    echo -e "${WHITE}• Eurocontrol (Европа): https://www.eurocontrol.int/notams${NC}"
+    echo -e "${WHITE}• Россия: https://www.caiga.ru/ (требуется регистрация)${NC}"
     echo ""
     
-    echo -e "${CYAN}💡 Для получения реальных NOTAM обратитесь к официальным источникам:${NC}"
-    echo -e "${WHITE}• FAA (США): https://notams.aim.faa.gov${NC}"
-    echo -e "${WHITE}• Eurocontrol (Европа): https://www.eurocontrol.int${NC}"
-    echo -e "${WHITE}• Российские NOTAM: через официальные каналы Аэронавигации${NC}"
+    echo -e "${YELLOW}📱 Мобильные приложения:${NC}"
+    echo -e "${WHITE}• ForeFlight (iOS)${NC}"
+    echo -e "${WHITE}• Garmin Pilot (iOS/Android)${NC}"
+    echo -e "${WHITE}• SkyDemon (Windows/iOS/Android)${NC}"
+    echo -e "${WHITE}• AirMate (iOS)${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}💻 Программное обеспечение:${NC}"
+    echo -e "${WHITE}• Little Navmap (бесплатное)${NC}"
+    echo -e "${WHITE}• SimBrief (веб-планировщик)${NC}"
+    echo -e "${WHITE}• Navigraph (подписка)${NC}"
+    echo ""
+    
+    # Показываем примеры типичных NOTAM для этого аэропорта
+    show_sample_notam "$icao"
+}
+
+# Функция для показа примеров NOTAM
+show_sample_notam() {
+    local icao=$1
+    
+    echo -e "${CYAN}📋 Примеры типичных NOTAM для $icao:${NC}"
+    echo ""
+    
+    case $icao in
+        UHPP|UHWW|URSS)
+            # Российские аэропорты
+            echo -e "${GREEN}• ВПП 10/28 закрыта для работ${NC}"
+            echo -e "  Период: 270800Z - 271800Z"
+            echo ""
+            echo -e "${GREEN}• Снижена интенсивность работы РЛС${NC}"
+            echo -e "  Период: 270000Z - 272400Z"
+            echo ""
+            echo -e "${GREEN}• Временное изменение схемы выхода${NC}"
+            echo -e "  Период: 271200Z - 271600Z"
+            ;;
+        UUEE|UUWW|UUDD)
+            # Московские аэропорты
+            echo -e "${GREEN}• Ремонт светосигнального оборудования${NC}"
+            echo -e "  Период: 270600Z - 272000Z"
+            echo ""
+            echo -e "${GREEN}• Ограничение высоты пролета${NC}"
+            echo -e "  Период: 271000Z - 271400Z"
+            ;;
+        KJFK|KLAX)
+            # Американские аэропорты
+            echo -e "${GREEN}• RWY 13L/31R CLSD FOR MAINT${NC}"
+            echo -e "  PERIOD: 270800Z - 271800Z"
+            echo ""
+            echo -e "${GREEN}• TWR FREQ 118.7 TEMPORARY U/S${NC}"
+            echo -e "  USE 121.5 EMERGENCY ONLY"
+            ;;
+        EGLL|LFPG|EDDF)
+            # Европейские аэропорты
+            echo -e "${GREEN}• ILS CAT II/III U/S${NC}"
+            echo -e "  PERIOD: 270900Z - 271700Z"
+            echo ""
+            echo -e "${GREEN}• ATC STRIKE - REDUCED SERVICE${NC}"
+            echo -e "  PERIOD: 271200Z - 271600Z"
+            ;;
+        *)
+            # Общие примеры
+            echo -e "${GREEN}• ВПП закрыта для технического обслуживания${NC}"
+            echo -e "${GREEN}• Временное изменение схем движения${NC}"
+            echo -e "${GREEN}• Ограничения по высоте/маршрутам${NC}"
+            echo -e "${GREEN}• Работы навигационного оборудования${NC}"
+            ;;
+    esac
+    echo ""
 }
 
 # Главная функция
@@ -206,16 +191,6 @@ main() {
         echo "  macOS: brew install curl"
         echo "  Linux: sudo apt install curl"
         exit 1
-    fi
-    
-    # Проверяем наличие jq для парсинга JSON
-    if ! command -v jq &> /dev/null; then
-        echo -e "${YELLOW}⚠️  Предупреждение: jq не установлен${NC}"
-        echo "Некоторые источники NOTAM могут не работать"
-        echo "Установите jq:"
-        echo "  macOS: brew install jq"
-        echo "  Linux: sudo apt install jq"
-        echo ""
     fi
     
     if [[ $# -eq 0 ]]; then
@@ -242,24 +217,25 @@ main() {
         exit 1
     fi
     
-    # Информация об аэропорте
-    local airport_info=$(get_airport_info "$icao")
-    echo -e "${GREEN}🏢 Аэропорт: $airport_info${NC}"
-    echo -e "${CYAN}🕐 Время запроса: $(date)${NC}"
-    echo ""
+    # Показываем информационное сообщение
+    show_notam_info "$icao"
     
-    # Получаем NOTAM
-    local notam_data=$(fetch_notam_comprehensive "$icao")
-    
-    if [[ -n "$notam_data" ]]; then
-        parse_notam "$notam_data" "$icao"
-    else
-        show_sample_notam "$icao"
+    # Все равно пробуем получить данные (на случай если API заработает)
+    local notam_data=$(fetch_notam_public "$icao")
+    if [[ -n "$notam_data" && "$notam_data" != *"error"* && "$notam_data" != *"null"* ]]; then
+        echo -e "${GREEN}🎉 Удалось получить некоторые данные:${NC}"
+        echo ""
+        if command -v jq &> /dev/null; then
+            parse_notam_json "$notam_data" "$icao"
+        else
+            echo "$notam_data" | head -10
+        fi
+        echo ""
     fi
     
     echo -e "${CYAN}===============================${NC}"
-    echo -e "${YELLOW}⚠️  Важно: NOTAM могут меняться${NC}"
-    echo -e "${YELLOW}   Всегда проверяйте актуальные NOTAM перед полетом${NC}"
+    echo -e "${YELLOW}⚠️  Важно: Всегда проверяйте актуальные NOTAM перед полетом!${NC}"
+    echo -e "${YELLOW}   Используйте официальные источники для навигации.${NC}"
 }
 
 # Запуск скрипта
